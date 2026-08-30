@@ -11,7 +11,7 @@ import { gapToPx, hordeScale } from '../gapMapping';
 import { CueBanner } from '../hud/CueBanner';
 import { Hud } from '../hud/Hud';
 import { ResistanceControl } from '../hud/ResistanceControl';
-import { Parallax } from '../parallax';
+import { Atmosphere } from '../atmosphere';
 import { FONT_MONO, FONT_SANS, UI } from '../theme';
 import { releaseWakeLock } from '../wakeLock';
 
@@ -25,7 +25,7 @@ const HORDE_COLORS = [0xc0392b, 0xa93226, 0x922b21, 0xb03a2e, 0x943126];
  */
 export class RideScene extends Phaser.Scene {
   private sim!: RideSim;
-  private parallax!: Parallax;
+  private atmosphere!: Atmosphere;
   private player!: Phaser.GameObjects.Rectangle;
   private horde!: Phaser.GameObjects.Container;
   private hordeParts: Phaser.GameObjects.Rectangle[] = [];
@@ -48,7 +48,7 @@ export class RideScene extends Phaser.Scene {
     this.bobPhase = 0;
     this.shambleT = 0;
 
-    this.parallax = new Parallax(this);
+    this.atmosphere = new Atmosphere(this);
 
     this.player = this.add
       .rectangle(RENDER.playerX, RENDER.groundY, RENDER.playerW, RENDER.playerH, PLAYER_COLOR)
@@ -197,7 +197,7 @@ export class RideScene extends Phaser.Scene {
   }
 
   private draw(state: SimState, dt: number): void {
-    this.parallax.update(state.playerSpeedKph / 3.6, dt);
+    this.atmosphere.update(state.playerSpeedKph / 3.6, dt);
 
     // Bob acoplado a la cadencia: una oscilación por pedalada.
     this.bobPhase += (state.cadenceRpm / 60) * Math.PI * 2 * dt;

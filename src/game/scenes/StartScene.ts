@@ -5,6 +5,7 @@ import {
   PROGRAM_CATALOG,
   type CatalogEntry,
 } from '../../sim/programs/catalog';
+import { Atmosphere } from '../atmosphere';
 import { gameAudio } from '../audio';
 import { formatMMSS } from '../format';
 import { ProfilePreview } from '../start/ProfilePreview';
@@ -47,6 +48,7 @@ interface StoredConfig {
 export class StartScene extends Phaser.Scene {
   private selectedIndex = 0;
   private stored!: StoredConfig;
+  private atmosphere!: Atmosphere;
   private cards: CardRefs[] = [];
   private preview!: ProfilePreview;
   // Objetos de las filas de ajuste, destruidos y recreados al cambiar de
@@ -58,6 +60,10 @@ export class StartScene extends Phaser.Scene {
   }
 
   create(): void {
+    // La noche de fondo, atenuada para que la UI respire.
+    this.atmosphere = new Atmosphere(this, false);
+    this.add.rectangle(0, 0, 1280, 720, 0x05060e, 0.6).setOrigin(0, 0);
+
     const stored = this.registry.get('trainingConfig') as StoredConfig | undefined;
     this.stored = stored ?? { programId: 'hiit-30-30', values: {} };
     const storedIndex = PROGRAM_CATALOG.findIndex((e) => e.program.id === this.stored.programId);
@@ -108,6 +114,10 @@ export class StartScene extends Phaser.Scene {
     });
 
     this.select(this.selectedIndex);
+  }
+
+  update(_time: number, deltaMs: number): void {
+    this.atmosphere.update(0, deltaMs / 1000); // la niebla deriva sola
   }
 
   private buildCard(entry: CatalogEntry, index: number): void {
