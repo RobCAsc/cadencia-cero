@@ -5,6 +5,7 @@ import type { TrainingProgram } from '../../sim/program';
 import { HIIT_30_30 } from '../../sim/programs/hiit-30-30';
 import { RideSim } from '../../sim/RideSim';
 import type { RideSummary, SimEvent, SimState } from '../../sim/types';
+import { Cyclist } from '../actors/Cyclist';
 import { Horde } from '../actors/Horde';
 import { gameAudio } from '../audio';
 import { formatMMSS } from '../format';
@@ -15,8 +16,6 @@ import { Atmosphere } from '../atmosphere';
 import { FONT_MONO, FONT_SANS, UI } from '../theme';
 import { releaseWakeLock } from '../wakeLock';
 
-const PLAYER_COLOR = 0x2ecc71;
-
 /**
  * La escena del ride. Posee un RideSim nuevo por sesión, lo avanza una vez por
  * frame y dibuja TODO como función del estado del sim: el render nunca guarda
@@ -25,14 +24,13 @@ const PLAYER_COLOR = 0x2ecc71;
 export class RideScene extends Phaser.Scene {
   private sim!: RideSim;
   private atmosphere!: Atmosphere;
-  private player!: Phaser.GameObjects.Rectangle;
+  private cyclist!: Cyclist;
   private horde!: Horde;
   private hud!: Hud;
   private banner!: CueBanner;
   private resistanceCtl!: ResistanceControl;
   private vignette!: Phaser.GameObjects.Rectangle;
   private finishedShown = false;
-  private bobPhase = 0;
 
   constructor() {
     super('RideScene');
@@ -42,15 +40,10 @@ export class RideScene extends Phaser.Scene {
     const program =
       (this.registry.get('selectedProgram') as TrainingProgram | undefined) ?? HIIT_30_30;
     this.sim = new RideSim(program);
-    this.bobPhase = 0;
 
     this.atmosphere = new Atmosphere(this);
 
-    this.player = this.add
-      .rectangle(RENDER.playerX, RENDER.groundY, RENDER.playerW, RENDER.playerH, PLAYER_COLOR)
-      .setOrigin(0.5, 1)
-      .setDepth(3);
-
+    this.cyclist = new Cyclist(this);
     this.horde = new Horde(this);
 
     this.hud = new Hud(this);
@@ -179,10 +172,7 @@ export class RideScene extends Phaser.Scene {
   private draw(state: SimState, dt: number): void {
     this.atmosphere.update(state.playerSpeedKph / 3.6, dt);
 
-    // Bob acoplado a la cadencia: una oscilación por pedalada.
-    this.bobPhase += (state.cadenceRpm / 60) * Math.PI * 2 * dt;
-    this.player.y = RENDER.groundY - 3 * (0.5 + 0.5 * Math.sin(this.bobPhase));
-
+    this.cyclist.update(dt, state.cadenceRpm, state.playerSpeedKph / 3.6);
     this.horde.update(dt, state.gapM, state.zombieSpeedKph / 3.6, state.caughtGraceSec > 0);
 
     this.hud.update(state);
