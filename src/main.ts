@@ -28,4 +28,6 @@ if (
   source instanceof FakeCadenceSource
 ) {
   new DevPanel(game, source);
+  // Referencia para depurar desde la consola del navegador.
+  (window as unknown as { game?: Phaser.Game }).game = game;
 }

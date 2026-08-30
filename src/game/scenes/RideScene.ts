@@ -3,13 +3,15 @@ import { RENDER } from '../../config';
 import type { CadenceSource } from '../../input/CadenceSource';
 import { HIIT_30_30 } from '../../sim/programs/hiit-30-30';
 import { RideSim } from '../../sim/RideSim';
-import type { SimEvent, SimState } from '../../sim/types';
+import type { RideSummary, SimEvent, SimState } from '../../sim/types';
+import { gameAudio } from '../audio';
+import { formatMMSS } from '../format';
 import { gapToPx, hordeScale } from '../gapMapping';
 import { CueBanner } from '../hud/CueBanner';
 import { Hud } from '../hud/Hud';
 import { ResistanceControl } from '../hud/ResistanceControl';
 import { Parallax } from '../parallax';
-import { UI } from '../theme';
+import { FONT_MONO, FONT_SANS, UI } from '../theme';
 
 const PLAYER_COLOR = 0x2ecc71;
 const HORDE_COLORS = [0xc0392b, 0xa93226, 0x922b21, 0xb03a2e, 0x943126];
@@ -28,6 +30,8 @@ export class RideScene extends Phaser.Scene {
   private hud!: Hud;
   private banner!: CueBanner;
   private resistanceCtl!: ResistanceControl;
+  private vignette!: Phaser.GameObjects.Rectangle;
+  private finishedShown = false;
   private bobPhase = 0;
   private shambleT = 0;
 
@@ -67,8 +71,15 @@ export class RideScene extends Phaser.Scene {
     });
 
     this.hud = new Hud(this);
-    this.banner = new CueBanner(this);
+    this.banner = new CueBanner(this, (finalPip) => gameAudio.playPip(finalPip));
     this.resistanceCtl = new ResistanceControl(this, (delta) => this.adjustResistance(delta));
+
+    // Viñeta roja persistente cuando la salud llega a 0; el ride sigue igual.
+    this.vignette = this.add
+      .rectangle(RENDER.width / 2, RENDER.height / 2, RENDER.width, RENDER.height, 0xe74c3c)
+      .setAlpha(0)
+      .setDepth(20);
+    this.finishedShown = false;
 
     const source = this.registry.get('cadenceSource') as CadenceSource;
     const unsubscribe = source.onSample((sample) => this.sim.pushCadence(sample));
@@ -104,8 +115,16 @@ export class RideScene extends Phaser.Scene {
   }
 
   private handleEvent(event: SimEvent, fastForward: boolean): void {
-    void fastForward; // el feedback de catch (paso 9) se suprime durante el salto dev
     switch (event.type) {
+      case 'caught':
+        // Durante el salto dev el estado se aplica igual, sin el show.
+        if (!fastForward) {
+          this.cameras.main.shake(500, 0.01);
+          this.cameras.main.flash(300, 192, 0, 0);
+          gameAudio.playCatch();
+          this.hud.pulseHealth();
+        }
+        break;
       case 'segmentChanged':
         if (event.segment.kind === 'surge') {
           this.banner.showNotice('¡¡OLEADA!!', 2500, UI.danger);
@@ -113,9 +132,63 @@ export class RideScene extends Phaser.Scene {
           this.banner.showNotice(`Resistencia → ${event.segment.cueResistance}`, 4000, UI.info);
         }
         break;
-      default:
+      case 'healthDepleted':
+        this.vignette.setAlpha(0.16);
         break;
+      case 'finished':
+        this.showFinished(event.summary);
+        break;
+      default:
+        break; // staleCadence y surgeWarning se leen del estado en la HUD/banner
     }
+  }
+
+  private showFinished(summary: RideSummary): void {
+    if (this.finishedShown) return;
+    this.finishedShown = true;
+    gameAudio.playFinish();
+
+    const cx = RENDER.width / 2;
+    // El dim se traga los clics para que la HUD de abajo quede inerte.
+    this.add
+      .rectangle(cx, RENDER.height / 2, RENDER.width, RENDER.height, 0x05050a, 0.78)
+      .setDepth(30)
+      .setInteractive();
+    this.add
+      .text(cx, 170, '¡SOBREVIVISTE!', {
+        fontFamily: FONT_SANS,
+        fontSize: '64px',
+        fontStyle: 'bold',
+        color: UI.good,
+      })
+      .setOrigin(0.5)
+      .setDepth(31);
+    this.add
+      .text(
+        cx,
+        330,
+        [
+          `Distancia:       ${(summary.distanceM / 1000).toFixed(2)} km`,
+          `Tiempo:          ${formatMMSS(summary.durationSec)}`,
+          `Veces alcanzado: ${summary.timesCaught}`,
+          `Cadencia media:  ${Math.round(summary.avgCadenceRpm)} rpm`,
+        ].join('\n'),
+        { fontFamily: FONT_MONO, fontSize: '30px', color: UI.textBright, lineSpacing: 14 },
+      )
+      .setOrigin(0.5)
+      .setDepth(31);
+
+    const button = this.add
+      .rectangle(cx, 520, 260, 76, UI.button)
+      .setDepth(31)
+      .setInteractive({ useHandCursor: true });
+    this.add
+      .text(cx, 520, 'Volver', { fontFamily: FONT_SANS, fontSize: '32px', color: UI.textBright })
+      .setOrigin(0.5)
+      .setDepth(32);
+    button.on('pointerover', () => button.setFillStyle(UI.buttonHover));
+    button.on('pointerout', () => button.setFillStyle(UI.button));
+    button.on('pointerdown', () => this.scene.restart());
   }
 
   private draw(state: SimState, dt: number): void {
