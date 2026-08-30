@@ -41,18 +41,17 @@ export class CueBanner {
 
   update(state: SimState): void {
     const next = state.segment.next;
-    const surgeInSec =
+    if (
       state.phase === 'riding' &&
       next !== undefined &&
       next.zombieSpeedKph > state.segment.zombieSpeedKph &&
       next.inSec <= SIM.surgeWarningSec
-        ? next.inSec
-        : undefined;
-
-    if (surgeInSec !== undefined) {
-      const n = Math.max(1, Math.ceil(surgeInSec));
-      this.display(`¡OLEADA EN ${n}!`, UI.danger);
-      if (n <= 3 && n !== this.lastPipValue) {
+    ) {
+      const n = Math.max(1, Math.ceil(next.inSec));
+      // Una oleada grita; una subida suave (tempo, umbral) solo avisa.
+      const isSurge = next.kind === 'surge';
+      this.display(isSurge ? `¡OLEADA EN ${n}!` : `La horda acelera en ${n}`, isSurge ? UI.danger : UI.warn);
+      if (isSurge && n <= 3 && n !== this.lastPipValue) {
         this.lastPipValue = n;
         this.onPip(n === 1);
       }

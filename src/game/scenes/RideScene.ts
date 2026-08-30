@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { RENDER } from '../../config';
 import type { CadenceSource } from '../../input/CadenceSource';
+import type { TrainingProgram } from '../../sim/program';
 import { HIIT_30_30 } from '../../sim/programs/hiit-30-30';
 import { RideSim } from '../../sim/RideSim';
 import type { RideSummary, SimEvent, SimState } from '../../sim/types';
@@ -41,7 +42,9 @@ export class RideScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.sim = new RideSim(HIIT_30_30);
+    const program =
+      (this.registry.get('selectedProgram') as TrainingProgram | undefined) ?? HIIT_30_30;
+    this.sim = new RideSim(program);
     this.bobPhase = 0;
     this.shambleT = 0;
 

@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { RENDER } from '../../config';
 import { FONT_MONO, FONT_SANS, UI } from '../theme';
+import { makeTapButton } from '../uiButton';
 
 const BTN = 64; // >= 64 px: dedos sobre una bici en movimiento
 
@@ -26,29 +27,11 @@ export class ResistanceControl {
       .text(cx, cy, '', { fontFamily: FONT_MONO, fontSize: '48px', fontStyle: 'bold', color: UI.textBright })
       .setOrigin(0.5)
       .setDepth(10);
-    makeButton(scene, cx - 80, cy, '−', () => onDelta(-1));
-    makeButton(scene, cx + 80, cy, '+', () => onDelta(1));
+    makeTapButton(scene, cx - 80, cy, BTN, '−', () => onDelta(-1));
+    makeTapButton(scene, cx + 80, cy, BTN, '+', () => onDelta(1));
   }
 
   update(level: number): void {
     this.levelText.setText(String(level));
   }
-}
-
-function makeButton(scene: Phaser.Scene, x: number, y: number, glyph: string, onTap: () => void): void {
-  const rect = scene.add
-    .rectangle(x, y, BTN, BTN, UI.button)
-    .setDepth(10)
-    .setInteractive({ useHandCursor: true });
-  scene.add
-    .text(x, y, glyph, { fontFamily: FONT_MONO, fontSize: '40px', color: UI.textBright })
-    .setOrigin(0.5)
-    .setDepth(11);
-  rect.on('pointerdown', () => {
-    onTap();
-    rect.setFillStyle(UI.buttonActive);
-    scene.time.delayedCall(90, () => rect.setFillStyle(UI.button));
-  });
-  rect.on('pointerover', () => rect.setFillStyle(UI.buttonHover));
-  rect.on('pointerout', () => rect.setFillStyle(UI.button));
 }
