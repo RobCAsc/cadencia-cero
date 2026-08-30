@@ -1,8 +1,25 @@
-// Placeholder del paso 1: el boot de Phaser llega con la escena de persecución.
-const app = document.getElementById('app');
-if (app) {
-  app.textContent = 'Cadencia Cero — Fase 0 (scaffold)';
-  app.style.color = '#cfd3dc';
-  app.style.font = '20px system-ui, sans-serif';
-  app.style.padding = '24px';
-}
+import Phaser from 'phaser';
+import { RENDER } from './config';
+import { RideScene } from './game/scenes/RideScene';
+import { FakeCadenceSource } from './input/FakeCadenceSource';
+import { createCadenceSource } from './input/createCadenceSource';
+
+const source = createCadenceSource('fake');
+void source.start();
+// Paso 6: cadencia fija para ver la persecución; el panel dev la reemplaza en el paso 7.
+if (source instanceof FakeCadenceSource) source.setCadence(70);
+
+const game = new Phaser.Game({
+  type: Phaser.AUTO,
+  parent: 'app',
+  width: RENDER.width,
+  height: RENDER.height,
+  backgroundColor: '#1a1a2e',
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
+  scene: [RideScene],
+});
+
+game.registry.set('cadenceSource', source);
