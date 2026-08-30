@@ -5,7 +5,11 @@ import { HIIT_30_30 } from '../../sim/programs/hiit-30-30';
 import { RideSim } from '../../sim/RideSim';
 import type { SimEvent, SimState } from '../../sim/types';
 import { gapToPx, hordeScale } from '../gapMapping';
+import { CueBanner } from '../hud/CueBanner';
+import { Hud } from '../hud/Hud';
+import { ResistanceControl } from '../hud/ResistanceControl';
 import { Parallax } from '../parallax';
+import { UI } from '../theme';
 
 const PLAYER_COLOR = 0x2ecc71;
 const HORDE_COLORS = [0xc0392b, 0xa93226, 0x922b21, 0xb03a2e, 0x943126];
@@ -21,6 +25,9 @@ export class RideScene extends Phaser.Scene {
   private player!: Phaser.GameObjects.Rectangle;
   private horde!: Phaser.GameObjects.Container;
   private hordeParts: Phaser.GameObjects.Rectangle[] = [];
+  private hud!: Hud;
+  private banner!: CueBanner;
+  private resistanceCtl!: ResistanceControl;
   private bobPhase = 0;
   private shambleT = 0;
 
@@ -59,6 +66,10 @@ export class RideScene extends Phaser.Scene {
       this.hordeParts.push(rect);
     });
 
+    this.hud = new Hud(this);
+    this.banner = new CueBanner(this);
+    this.resistanceCtl = new ResistanceControl(this, (delta) => this.adjustResistance(delta));
+
     const source = this.registry.get('cadenceSource') as CadenceSource;
     const unsubscribe = source.onSample((sample) => this.sim.pushCadence(sample));
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, unsubscribe);
@@ -93,9 +104,18 @@ export class RideScene extends Phaser.Scene {
   }
 
   private handleEvent(event: SimEvent, fastForward: boolean): void {
-    // HUD, cues, feedback de catch y overlay de fin llegan en los pasos 8-9.
-    void event;
-    void fastForward;
+    void fastForward; // el feedback de catch (paso 9) se suprime durante el salto dev
+    switch (event.type) {
+      case 'segmentChanged':
+        if (event.segment.kind === 'surge') {
+          this.banner.showNotice('¡¡OLEADA!!', 2500, UI.danger);
+        } else if (event.segment.cueResistance !== undefined) {
+          this.banner.showNotice(`Resistencia → ${event.segment.cueResistance}`, 4000, UI.info);
+        }
+        break;
+      default:
+        break;
+    }
   }
 
   private draw(state: SimState, dt: number): void {
@@ -116,5 +136,9 @@ export class RideScene extends Phaser.Scene {
       rect.x = baseX + 2.5 * Math.sin(this.shambleT * 2.1 + i * 1.7);
       rect.y = -Math.abs(2 * Math.sin(this.shambleT * 5 + i * 1.3));
     });
+
+    this.hud.update(state);
+    this.banner.update(state);
+    this.resistanceCtl.update(state.resistanceLevel);
   }
 }
