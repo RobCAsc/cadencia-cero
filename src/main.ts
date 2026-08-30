@@ -1,13 +1,12 @@
 import Phaser from 'phaser';
 import { RENDER } from './config';
+import { DevPanel } from './dev/DevPanel';
 import { RideScene } from './game/scenes/RideScene';
 import { FakeCadenceSource } from './input/FakeCadenceSource';
 import { createCadenceSource } from './input/createCadenceSource';
 
 const source = createCadenceSource('fake');
 void source.start();
-// Paso 6: cadencia fija para ver la persecución; el panel dev la reemplaza en el paso 7.
-if (source instanceof FakeCadenceSource) source.setCadence(70);
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -23,3 +22,10 @@ const game = new Phaser.Game({
 });
 
 game.registry.set('cadenceSource', source);
+
+if (
+  (import.meta.env.DEV || location.search.includes('dev=1')) &&
+  source instanceof FakeCadenceSource
+) {
+  new DevPanel(game, source);
+}
