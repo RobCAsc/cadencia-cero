@@ -6,6 +6,11 @@
 class GameAudio {
   private ctx: AudioContext | null = null;
 
+  /** El contexto compartido (null hasta el primer unlock por gesto). */
+  get context(): AudioContext | null {
+    return this.ctx;
+  }
+
   unlock(): void {
     if (!this.ctx) {
       try {

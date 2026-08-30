@@ -8,6 +8,8 @@ import type { RideSummary, SimEvent, SimState } from '../../sim/types';
 import { Cyclist } from '../actors/Cyclist';
 import { Horde } from '../actors/Horde';
 import { gameAudio } from '../audio';
+import { Effects, ensureVignette } from '../effects';
+import { proximityAudio } from '../proximityAudio';
 import { formatMMSS } from '../format';
 import { CueBanner } from '../hud/CueBanner';
 import { Hud } from '../hud/Hud';
@@ -26,6 +28,7 @@ export class RideScene extends Phaser.Scene {
   private atmosphere!: Atmosphere;
   private cyclist!: Cyclist;
   private horde!: Horde;
+  private effects!: Effects;
   private hud!: Hud;
   private banner!: CueBanner;
   private resistanceCtl!: ResistanceControl;
@@ -45,6 +48,10 @@ export class RideScene extends Phaser.Scene {
 
     this.cyclist = new Cyclist(this);
     this.horde = new Horde(this);
+    this.effects = new Effects(this);
+    ensureVignette(this);
+    this.add.image(0, 0, 'fx-vignette').setOrigin(0, 0).setDepth(5);
+    proximityAudio.start();
 
     this.hud = new Hud(this);
     this.banner = new CueBanner(this, (finalPip) => gameAudio.playPip(finalPip));
@@ -59,7 +66,10 @@ export class RideScene extends Phaser.Scene {
 
     const source = this.registry.get('cadenceSource') as CadenceSource;
     const unsubscribe = source.onSample((sample) => this.sim.pushCadence(sample));
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, unsubscribe);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      unsubscribe();
+      proximityAudio.stop();
+    });
   }
 
   update(_time: number, deltaMs: number): void {
@@ -100,6 +110,7 @@ export class RideScene extends Phaser.Scene {
           gameAudio.playCatch();
           this.hud.pulseHealth();
           this.horde.lunge();
+          this.effects.burstBlood();
         }
         break;
       case 'segmentChanged':
@@ -113,6 +124,7 @@ export class RideScene extends Phaser.Scene {
         this.vignette.setAlpha(0.16);
         break;
       case 'finished':
+        proximityAudio.stop();
         this.showFinished(event.summary);
         break;
       default:
@@ -174,6 +186,13 @@ export class RideScene extends Phaser.Scene {
 
     this.cyclist.update(dt, state.cadenceRpm, state.playerSpeedKph / 3.6);
     this.horde.update(dt, state.gapM, state.zombieSpeedKph / 3.6, state.caughtGraceSec > 0);
+    this.effects.update(state.playerSpeedKph / 3.6);
+    proximityAudio.update(state.gapM, dt);
+
+    // La cámara se acerca un pelín cuando los tienes encima.
+    const camera = this.cameras.main;
+    const targetZoom = state.gapM < 20 ? 1 + ((20 - state.gapM) / 20) * 0.045 : 1;
+    camera.setZoom(camera.zoom + (targetZoom - camera.zoom) * Math.min(1, dt * 3));
 
     this.hud.update(state);
     this.banner.update(state);

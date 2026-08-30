@@ -75,10 +75,10 @@ export class Cyclist {
     g.rotation = pedaling ? Math.sin(this.crankAngle) * 0.01 : 0;
 
     // Faro delantero.
-    g.fillStyle(LIGHT, 0.13);
-    g.fillTriangle(28, -41, 215, -36, 215, 2);
-    g.fillStyle(LIGHT, 0.09);
-    g.fillTriangle(28, -41, 215, -28, 215, -8);
+    g.fillStyle(LIGHT, 0.16);
+    g.fillTriangle(28, -41, 225, -37, 225, 4);
+    g.fillStyle(LIGHT, 0.11);
+    g.fillTriangle(28, -41, 225, -29, 225, -8);
     g.fillStyle(LIGHT, 1);
     g.fillCircle(28, -41, 2.2);
 
