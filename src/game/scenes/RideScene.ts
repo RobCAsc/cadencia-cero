@@ -12,6 +12,7 @@ import { Hud } from '../hud/Hud';
 import { ResistanceControl } from '../hud/ResistanceControl';
 import { Parallax } from '../parallax';
 import { FONT_MONO, FONT_SANS, UI } from '../theme';
+import { releaseWakeLock } from '../wakeLock';
 
 const PLAYER_COLOR = 0x2ecc71;
 const HORDE_COLORS = [0xc0392b, 0xa93226, 0x922b21, 0xb03a2e, 0x943126];
@@ -146,6 +147,7 @@ export class RideScene extends Phaser.Scene {
   private showFinished(summary: RideSummary): void {
     if (this.finishedShown) return;
     this.finishedShown = true;
+    releaseWakeLock(); // sesión terminada: la pantalla ya puede dormirse
     gameAudio.playFinish();
 
     const cx = RENDER.width / 2;
@@ -188,7 +190,7 @@ export class RideScene extends Phaser.Scene {
       .setDepth(32);
     button.on('pointerover', () => button.setFillStyle(UI.buttonHover));
     button.on('pointerout', () => button.setFillStyle(UI.button));
-    button.on('pointerdown', () => this.scene.restart());
+    button.on('pointerdown', () => this.scene.start('StartScene'));
   }
 
   private draw(state: SimState, dt: number): void {

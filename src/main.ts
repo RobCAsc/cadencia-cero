@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { RENDER } from './config';
 import { DevPanel } from './dev/DevPanel';
 import { RideScene } from './game/scenes/RideScene';
+import { StartScene } from './game/scenes/StartScene';
 import { FakeCadenceSource } from './input/FakeCadenceSource';
 import { createCadenceSource } from './input/createCadenceSource';
 
@@ -18,7 +19,7 @@ const game = new Phaser.Game({
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [RideScene],
+  scene: [StartScene, RideScene],
 });
 
 game.registry.set('cadenceSource', source);
