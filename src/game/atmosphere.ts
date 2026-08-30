@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { RENDER } from '../config';
+import { lcg } from './rng';
 
 // Atmósfera nocturna en siluetas: cielo con luna, ruinas lejanas, árboles
 // muertos, matorral, carretera y niebla en tres planos. Todo dibujado por
@@ -24,15 +25,6 @@ const ROAD_EDGE = 0x353d63;
 const ROAD_DASH = 0x343b60;
 const ROAD_CRACK = 0x04050b;
 const FOG = 0x7285ad;
-
-/** LCG determinista: el paisaje es el mismo en cada arranque. */
-function lcg(seed: number): () => number {
-  let s = seed >>> 0;
-  return () => {
-    s = (s * 1664525 + 1013904223) >>> 0;
-    return s / 0xffffffff;
-  };
-}
 
 function fillVerticalGradient(
   g: Phaser.GameObjects.Graphics,

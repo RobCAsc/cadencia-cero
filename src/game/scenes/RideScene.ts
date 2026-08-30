@@ -5,9 +5,9 @@ import type { TrainingProgram } from '../../sim/program';
 import { HIIT_30_30 } from '../../sim/programs/hiit-30-30';
 import { RideSim } from '../../sim/RideSim';
 import type { RideSummary, SimEvent, SimState } from '../../sim/types';
+import { Horde } from '../actors/Horde';
 import { gameAudio } from '../audio';
 import { formatMMSS } from '../format';
-import { gapToPx, hordeScale } from '../gapMapping';
 import { CueBanner } from '../hud/CueBanner';
 import { Hud } from '../hud/Hud';
 import { ResistanceControl } from '../hud/ResistanceControl';
@@ -16,7 +16,6 @@ import { FONT_MONO, FONT_SANS, UI } from '../theme';
 import { releaseWakeLock } from '../wakeLock';
 
 const PLAYER_COLOR = 0x2ecc71;
-const HORDE_COLORS = [0xc0392b, 0xa93226, 0x922b21, 0xb03a2e, 0x943126];
 
 /**
  * La escena del ride. Posee un RideSim nuevo por sesión, lo avanza una vez por
@@ -27,15 +26,13 @@ export class RideScene extends Phaser.Scene {
   private sim!: RideSim;
   private atmosphere!: Atmosphere;
   private player!: Phaser.GameObjects.Rectangle;
-  private horde!: Phaser.GameObjects.Container;
-  private hordeParts: Phaser.GameObjects.Rectangle[] = [];
+  private horde!: Horde;
   private hud!: Hud;
   private banner!: CueBanner;
   private resistanceCtl!: ResistanceControl;
   private vignette!: Phaser.GameObjects.Rectangle;
   private finishedShown = false;
   private bobPhase = 0;
-  private shambleT = 0;
 
   constructor() {
     super('RideScene');
@@ -46,33 +43,15 @@ export class RideScene extends Phaser.Scene {
       (this.registry.get('selectedProgram') as TrainingProgram | undefined) ?? HIIT_30_30;
     this.sim = new RideSim(program);
     this.bobPhase = 0;
-    this.shambleT = 0;
 
     this.atmosphere = new Atmosphere(this);
 
     this.player = this.add
       .rectangle(RENDER.playerX, RENDER.groundY, RENDER.playerW, RENDER.playerH, PLAYER_COLOR)
-      .setOrigin(0.5, 1);
+      .setOrigin(0.5, 1)
+      .setDepth(3);
 
-    this.horde = this.add.container(0, RENDER.groundY);
-    this.hordeParts = [];
-    const offsets = [-85, -60, -38, -18, 0];
-    const sizes: ReadonlyArray<readonly [number, number]> = [
-      [30, 58],
-      [36, 66],
-      [28, 54],
-      [34, 70],
-      [32, 62],
-    ];
-    offsets.forEach((offset, i) => {
-      const [w, h] = sizes[i] ?? [30, 60];
-      const rect = this.add
-        .rectangle(offset, 0, w, h, HORDE_COLORS[i % HORDE_COLORS.length])
-        .setOrigin(0.5, 1);
-      rect.setData('baseX', offset);
-      this.horde.add(rect);
-      this.hordeParts.push(rect);
-    });
+    this.horde = new Horde(this);
 
     this.hud = new Hud(this);
     this.banner = new CueBanner(this, (finalPip) => gameAudio.playPip(finalPip));
@@ -127,6 +106,7 @@ export class RideScene extends Phaser.Scene {
           this.cameras.main.flash(300, 192, 0, 0);
           gameAudio.playCatch();
           this.hud.pulseHealth();
+          this.horde.lunge();
         }
         break;
       case 'segmentChanged':
@@ -203,17 +183,7 @@ export class RideScene extends Phaser.Scene {
     this.bobPhase += (state.cadenceRpm / 60) * Math.PI * 2 * dt;
     this.player.y = RENDER.groundY - 3 * (0.5 + 0.5 * Math.sin(this.bobPhase));
 
-    this.shambleT += dt;
-    const px = gapToPx(state.gapM);
-    this.horde.x = RENDER.playerX - 30 - px;
-    const scale = hordeScale(state.gapM);
-    this.horde.setScale(scale, state.caughtGraceSec > 0 ? scale * 0.92 : scale);
-    this.horde.setAlpha(state.gapM > 100 ? 0.85 : 1);
-    this.hordeParts.forEach((rect, i) => {
-      const baseX = rect.getData('baseX') as number;
-      rect.x = baseX + 2.5 * Math.sin(this.shambleT * 2.1 + i * 1.7);
-      rect.y = -Math.abs(2 * Math.sin(this.shambleT * 5 + i * 1.3));
-    });
+    this.horde.update(dt, state.gapM, state.zombieSpeedKph / 3.6, state.caughtGraceSec > 0);
 
     this.hud.update(state);
     this.banner.update(state);
