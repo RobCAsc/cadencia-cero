@@ -10,6 +10,7 @@ import { createCadenceSource } from './input/createCadenceSource';
 import { createHeartRateSource } from './input/createHeartRateSource';
 import { toSimRider } from './sim/riderProfile';
 import { loadRiderProfile } from './storage/riderStore';
+import { loadSessions } from './storage/sessionStore';
 
 const source = createCadenceSource('fake');
 void source.start();
@@ -40,6 +41,11 @@ game.registry.set('band', new BandConnection(game.registry, heartRate));
 const stored = loadRiderProfile();
 game.registry.set('riderProfileStored', stored);
 game.registry.set('riderProfile', toSimRider(stored));
+
+// El historial de salidas llega de IndexedDB de forma asíncrona; hasta
+// entonces el campamento arranca vacío y se refresca al llegar.
+game.registry.set('sessionHistory', []);
+void loadSessions().then((sessions) => game.registry.set('sessionHistory', sessions));
 
 if (
   (import.meta.env.DEV || location.search.includes('dev=1')) &&

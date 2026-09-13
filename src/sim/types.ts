@@ -68,6 +68,8 @@ export interface RideSummary {
   /** Mayor pulso sostenido (ventana de unos segundos) de la sesión. */
   peakHeartRateBpm: number;
   avgEffortFrac: number;
+  /** Segundos en cada zona cardíaca: índice 0 = suave (bajo Z1), 1..5 = Z1..Z5. */
+  zoneSec: readonly number[];
 }
 
 export type SimEvent =

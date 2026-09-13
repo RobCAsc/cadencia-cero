@@ -44,6 +44,17 @@ export const EFFORT: EffortTable = {
   kph: [0, 5, 10, 14, 18, 22, 27, 32, 38],
 };
 
+/**
+ * Zonas cardíacas por fracción de reserva: cada entrada es el límite inferior
+ * de Z1..Z5. Por debajo de Z1 es "suave" (zona 0): cuenta como tiempo pero
+ * no como cardio. Z2 en adelante es lo que la OMS llama actividad moderada.
+ */
+export const ZONES = {
+  lowerBounds: [0.5, 0.6, 0.7, 0.8, 0.9],
+  /** Primera zona que cuenta como minutos de cardio. */
+  activeFromZone: 2,
+} as const;
+
 export interface RiderProfile {
   hrMaxBpm: number;
   hrRestBpm: number;

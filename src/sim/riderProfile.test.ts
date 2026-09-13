@@ -24,6 +24,7 @@ const summary = (over: Partial<RideSummary> = {}): RideSummary => ({
   avgHeartRateBpm: 130,
   peakHeartRateBpm: 160,
   avgEffortFrac: 0.6,
+  zoneSec: [0, 0, 1200, 0, 0, 0],
   ...over,
 });
 

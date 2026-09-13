@@ -2,9 +2,11 @@ import Phaser from 'phaser';
 import { RENDER, RIDER, type InputMode, type RiderProfile } from '../../config';
 import type { CadenceSource } from '../../input/CadenceSource';
 import type { HeartRateSource } from '../../input/HeartRateSource';
-import type { TrainingProgram } from '../../sim/program';
+import { toSessionRecord, type SessionRecord } from '../../sim/history';
+import { expandProgram, totalDurationSec, type TrainingProgram } from '../../sim/program';
 import { HIIT_30_30 } from '../../sim/programs/hiit-30-30';
 import { RideSim } from '../../sim/RideSim';
+import { activeSec } from '../../sim/zones';
 import {
   applyAdvice,
   calibrationAdvice,
@@ -14,6 +16,7 @@ import {
 } from '../../sim/riderProfile';
 import type { RideSummary, SimEvent, SimState } from '../../sim/types';
 import { saveRiderProfile } from '../../storage/riderStore';
+import { saveSession } from '../../storage/sessionStore';
 import { Cyclist } from '../actors/Cyclist';
 import { Horde } from '../actors/Horde';
 import { gameAudio } from '../audio';
@@ -52,6 +55,8 @@ export class RideScene extends Phaser.Scene {
   private resistanceCtl: ResistanceControl | undefined;
   private vignette!: Phaser.GameObjects.Rectangle;
   private finishedShown = false;
+  private program!: TrainingProgram;
+  private startedAtMs = 0;
 
   constructor() {
     super('RideScene');
@@ -63,6 +68,8 @@ export class RideScene extends Phaser.Scene {
     const inputMode = (this.registry.get('inputMode') as InputMode | undefined) ?? 'heartRate';
     const rider = (this.registry.get('riderProfile') as RiderProfile | undefined) ?? RIDER;
     this.sim = new RideSim(program, undefined, undefined, { inputMode, rider });
+    this.program = program;
+    this.startedAtMs = Date.now();
 
     this.atmosphere = new Atmosphere(this);
 
@@ -160,11 +167,33 @@ export class RideScene extends Phaser.Scene {
         break;
       case 'finished':
         proximityAudio.stop();
+        this.recordSession(event.summary, true);
         this.showFinished(event.summary);
         break;
       default:
         break; // staleCadence y surgeWarning se leen del estado en la HUD/banner
     }
+  }
+
+  /**
+   * La sesión al historial: al registry para la pantalla de campamento de
+   * inmediato, y a IndexedDB para la próxima vez. Un fallo de disco no toca
+   * el ride.
+   */
+  private recordSession(summary: RideSummary, completed: boolean): void {
+    const stored = this.registry.get('riderProfileStored') as StoredRiderProfile | undefined;
+    const record = toSessionRecord({
+      startedAtMs: this.startedAtMs,
+      program: this.program,
+      plannedSec: totalDurationSec(expandProgram(this.program)),
+      inputMode: this.sim.state.inputMode,
+      completed,
+      summary,
+      hrRestBpm: stored?.hrRestBpm ?? RIDER.hrRestBpm,
+    });
+    const history = (this.registry.get('sessionHistory') as SessionRecord[] | undefined) ?? [];
+    this.registry.set('sessionHistory', [...history.filter((r) => r.id !== record.id), record]);
+    void saveSession(record);
   }
 
   private showFinished(summary: RideSummary): void {
@@ -197,6 +226,7 @@ export class RideScene extends Phaser.Scene {
     if (heartRateMode) {
       lines.push(`Pulso medio:     ${Math.round(summary.avgHeartRateBpm)} bpm`);
       lines.push(`Pico sostenido:  ${Math.round(summary.peakHeartRateBpm)} bpm`);
+      lines.push(`Cardio (Z2+):    ${Math.round(activeSec(summary.zoneSec) / 60)} min`);
     } else {
       lines.push(`Cadencia media:  ${Math.round(summary.avgCadenceRpm)} rpm`);
     }

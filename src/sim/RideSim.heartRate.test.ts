@@ -205,4 +205,29 @@ describe('RideSim en modo pulso', () => {
     expect(sim.state.heartRateBpm).toBeCloseTo(150);
     expect(sim.state.playerSpeedKph).toBe(0);
   });
+
+  it('el resumen reparte el tiempo por zona cardíaca', () => {
+    // Reposo 60, máx 160: 100 bpm = 40 % (suave), 125 = 65 % (Z2), 145 = 85 % (Z4).
+    const sim = make(steady(30, 1));
+    beatFor(sim, 10, 100);
+    beatFor(sim, 10, 125);
+    const events = beatFor(sim, 10.1, 145);
+    const finished = events.find((e) => e.type === 'finished');
+    if (finished?.type !== 'finished') throw new Error('unreachable');
+    const zones = finished.summary.zoneSec;
+    expect(zones).toHaveLength(6);
+    expect(zones[0]).toBeCloseTo(10, 0);
+    expect(zones[2]).toBeCloseTo(10, 0);
+    expect(zones[4]).toBeCloseTo(10, 0);
+    expect(zones.reduce((a, b) => a + b, 0)).toBeCloseTo(30, 0);
+  });
+
+  it('summary() a mitad de sesión describe lo pedaleado hasta ahora', () => {
+    const sim = make(steady(600, 1));
+    beatFor(sim, 20, 125);
+    const partial = sim.summary();
+    expect(partial.durationSec).toBeCloseTo(20, 0);
+    expect(partial.zoneSec[2]).toBeCloseTo(20, 0);
+    expect(sim.state.phase).toBe('riding');
+  });
 });

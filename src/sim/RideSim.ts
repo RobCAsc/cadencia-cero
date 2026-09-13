@@ -10,6 +10,7 @@ import {
 } from './program';
 import { playerSpeedKph } from './speedTable';
 import type { CadenceSample, HeartRateSample, RideSummary, SimEvent, SimState } from './types';
+import { emptyZoneSec, zoneOf } from './zones';
 
 export interface RideSimOptions {
   /** Qué entrada mueve al ciclista. Por defecto el pulso, la entrada real del proyecto. */
@@ -60,6 +61,7 @@ export class RideSim {
   private cadenceRpmSec = 0; // ∫ rpm dt, para la cadencia media del resumen
   private heartRateBpmSec = 0; // ∫ bpm dt, para el pulso medio del resumen
   private effortFracSec = 0; // ∫ esfuerzo dt
+  private readonly zoneSec = emptyZoneSec(); // segundos por zona cardíaca
   private peakEmaBpm = 0; // pulso con ventana lenta: un pico de un segundo no cuenta
   private peakBpm = 0;
   private lastSegmentIndex = -1;
@@ -147,6 +149,8 @@ export class RideSim {
     this.cadenceRpmSec += rpm * dt;
     this.heartRateBpmSec += bpm * dt;
     this.effortFracSec += this.effortFrac * dt;
+    const zone = zoneOf(this.effortFrac);
+    this.zoneSec[zone] = (this.zoneSec[zone] ?? 0) + dt;
     this.effectiveRpm = rpm;
     this.lastPlayerKph = pKph;
     this.lastZombieKph = zKph;
@@ -273,7 +277,11 @@ export class RideSim {
     };
   }
 
-  private summary(): RideSummary {
+  /**
+   * Resumen de lo pedaleado hasta ahora. Al terminar viaja en el evento
+   * 'finished'; a mitad de sesión sirve para guardar una salida abandonada.
+   */
+  summary(): RideSummary {
     const t = this.elapsedSec;
     return {
       durationSec: t,
@@ -284,6 +292,7 @@ export class RideSim {
       avgHeartRateBpm: t > 0 ? this.heartRateBpmSec / t : 0,
       peakHeartRateBpm: this.peakBpm,
       avgEffortFrac: t > 0 ? this.effortFracSec / t : 0,
+      zoneSec: [...this.zoneSec],
     };
   }
 }
