@@ -5,6 +5,8 @@ import type { BandConnection } from '../input/BandConnection';
 import type { BleStatus } from '../input/BleHeartRateSource';
 import type { HeartRateSource } from '../input/HeartRateSource';
 import type { RideScene } from '../game/scenes/RideScene';
+import { deleteAllSessions, saveSession } from '../storage/sessionStore';
+import { seedHistory } from './seedHistory';
 
 const MAX_RPM = 130;
 const MAX_BPM = 200;
@@ -58,6 +60,8 @@ export class DevPanel {
       <label>Pulso <input id="dev-hr" type="range" min="0" max="${MAX_BPM}" step="1" value="0" /></label>
       <span id="dev-hr-readout">sin pulso</span>
       <button id="dev-skip" type="button">Saltar segmento</button>
+      <button id="dev-seed" type="button" title="Cinco semanas de salidas inventadas">Sembrar historial</button>
+      <button id="dev-clear" type="button">Borrar historial</button>
       <span class="ble">
         <button id="dev-ble" type="button">Conectar pulsera</button>
         <span id="dev-ble-status" class="ble-status">${BLE_STATUS_LABEL.idle}</span>
@@ -92,6 +96,12 @@ export class DevPanel {
       this.rideScene()?.fastForwardToNextSegment();
       skip.blur(); // que Espacio/Enter no lo re-dispare al seguir jugando
     });
+    q<HTMLButtonElement>('#dev-seed').addEventListener('click', () => {
+      void this.seed();
+    });
+    q<HTMLButtonElement>('#dev-clear').addEventListener('click', () => {
+      void deleteAllSessions().then(() => this.game.registry.set('sessionHistory', []));
+    });
     this.bleButton.addEventListener('click', () => {
       void this.toggleBand();
       this.bleButton.blur();
@@ -123,6 +133,14 @@ export class DevPanel {
       reserve();
       new ResizeObserver(reserve).observe(root);
     }
+  }
+
+  /** Historial inventado: sustituye lo que haya, en disco y en el registry. */
+  private async seed(): Promise<void> {
+    await deleteAllSessions();
+    const sessions = seedHistory(Date.now());
+    for (const record of sessions) await saveSession(record);
+    this.game.registry.set('sessionHistory', sessions);
   }
 
   private rideScene(): RideScene | undefined {

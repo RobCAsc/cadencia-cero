@@ -2,6 +2,7 @@ import type { TrainingProgram } from '../program';
 import { FONDO } from './fondo';
 import { HIIT_30_30 } from './hiit-30-30';
 import { PIRAMIDE } from './piramide';
+import { PRIMERA_SALIDA } from './primera-salida';
 import { RECUPERACION } from './recuperacion';
 import { UMBRAL } from './umbral';
 
@@ -39,6 +40,11 @@ const warmupMin = (defaultValue: number): AdjustmentSpec => ({
 });
 
 export const PROGRAM_CATALOG: readonly CatalogEntry[] = [
+  {
+    program: PRIMERA_SALIDA,
+    description: 'Doce minutos para conocer la bici y la horda. Sin oleadas.',
+    adjustments: [],
+  },
   {
     program: RECUPERACION,
     description: 'Gira las piernas con la horda lejos. Sin exigencia.',

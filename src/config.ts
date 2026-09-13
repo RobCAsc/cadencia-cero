@@ -55,6 +55,18 @@ export const ZONES = {
   activeFromZone: 2,
 } as const;
 
+/**
+ * Meta semanal del hábito. Dos puertas y basta con cruzar una: salidas por
+ * semana (la que sostiene a quien empieza) o minutos en Z2+ (los 150 min de
+ * actividad moderada que recomienda la OMS). La racha cuenta semanas, no
+ * días: una racha diaria castiga al principiante y rompe el hábito que
+ * pretende crear.
+ */
+export const HABIT = {
+  sessionsPerWeek: 3,
+  activeMinPerWeek: 150,
+} as const;
+
 export interface RiderProfile {
   hrMaxBpm: number;
   hrRestBpm: number;

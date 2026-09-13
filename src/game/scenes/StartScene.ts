@@ -1,22 +1,26 @@
 import Phaser from 'phaser';
+import type { BandConnection } from '../../input/BandConnection';
+import type { SessionRecord } from '../../sim/history';
 import { expandProgram, totalDurationSec } from '../../sim/program';
 import {
   applyAdjustments,
   PROGRAM_CATALOG,
   type CatalogEntry,
 } from '../../sim/programs/catalog';
+import { recommendToday, type Recommendation } from '../../sim/progress';
+import type { StoredRiderProfile } from '../../sim/riderProfile';
 import { Atmosphere } from '../atmosphere';
 import { gameAudio } from '../audio';
 import { formatMMSS } from '../format';
-import type { BandConnection } from '../../input/BandConnection';
-import type { StoredRiderProfile } from '../../sim/riderProfile';
 import { ProfilePanel } from '../start/ProfilePanel';
 import { ProfilePreview } from '../start/ProfilePreview';
+import { ProgressPanel } from '../start/ProgressPanel';
 import { FONT_MONO, FONT_SANS, UI } from '../theme';
 import { makeTapButton, makeTextButton } from '../uiButton';
 import { acquireWakeLock } from '../wakeLock';
 
 const TARGET_COLOR: Record<string, number> = {
+  starter: 0x5dade2,
   recovery: 0x2ecc71,
   aerobic: 0x16a085,
   threshold: 0xf39c12,
@@ -24,16 +28,24 @@ const TARGET_COLOR: Record<string, number> = {
   mixed: 0x9b59b6,
 };
 
-const CARD_X = 56;
-const CARD_W = 480;
-const CARD_H = 88;
-const CARD_PITCH = 100;
-const CARD_Y0 = 140;
-const PANEL_X = 620;
+const LEFT_X = 56;
+const LEFT_W = 470;
+const RIGHT_X = 580;
+const RIGHT_W = 644;
+const CARD_Y = 134;
+const CARD_H = 236;
+const ADJUST_Y0 = 404;
+const ADJUST_PITCH = 56;
+const CHIPS_Y = 552;
+const CHIP_H = 44;
+const CHIP_GAP = 6;
+const CARD_BG = 0x161b28;
+const CARD_BG_SELECTED = 0x1c2334;
 
-interface CardRefs {
-  bg: Phaser.GameObjects.Rectangle;
-  duration: Phaser.GameObjects.Text;
+interface Chip {
+  rect: Phaser.GameObjects.Rectangle;
+  label: Phaser.GameObjects.Text;
+  stripe: Phaser.GameObjects.Rectangle;
 }
 
 /** Configuración elegida, persistida en el registry mientras viva la sesión. */
@@ -42,18 +54,31 @@ interface StoredConfig {
   values: Record<string, Record<string, number>>;
 }
 
+/** Nombre corto para los chips: "Primera salida" no cabe. */
+function chipLabel(entry: CatalogEntry): string {
+  return entry.program.id === 'primera-salida' ? 'Primera' : entry.program.name;
+}
+
 /**
- * Pantalla de configuración del entrenamiento: eliges el programa (= el perfil
- * del antagonista), lo ajustas dentro de rangos acotados y EMPEZAR es el gesto
- * que desbloquea fullscreen, wake lock y audio — el mismo patrón de gesto que
- * exigirá requestDevice() en Fase 1.
+ * El campamento: lo que llevas (semana, racha, Ruta, salud) a la izquierda y
+ * la salida de hoy a la derecha, lista con un toque. Los demás programas
+ * quedan a mano como chips. EMPEZAR es el gesto que desbloquea fullscreen,
+ * wake lock y audio, el mismo gesto que exige requestDevice().
  */
 export class StartScene extends Phaser.Scene {
   private selectedIndex = 0;
+  private recommendedIndex = 0;
+  private recommendation!: Recommendation;
   private stored!: StoredConfig;
   private atmosphere!: Atmosphere;
-  private cards: CardRefs[] = [];
+  private progress!: ProgressPanel;
   private preview!: ProfilePreview;
+  private cardHeading!: Phaser.GameObjects.Text;
+  private cardStripe!: Phaser.GameObjects.Rectangle;
+  private cardName!: Phaser.GameObjects.Text;
+  private cardDuration!: Phaser.GameObjects.Text;
+  private cardReason!: Phaser.GameObjects.Text;
+  private chips: Chip[] = [];
   // Objetos de las filas de ajuste, destruidos y recreados al cambiar de
   // programa. Sin Container: el hit-test de Phaser no ve botones re-parentados.
   private adjustObjects: Phaser.GameObjects.GameObject[] = [];
@@ -67,41 +92,45 @@ export class StartScene extends Phaser.Scene {
   create(): void {
     // La noche de fondo, atenuada para que la UI respire.
     this.atmosphere = new Atmosphere(this, false);
-    this.add.rectangle(0, 0, 1280, 720, 0x05060e, 0.6).setOrigin(0, 0);
+    this.add.rectangle(0, 0, 1280, 720, 0x05060e, 0.74).setOrigin(0, 0);
 
     const stored = this.registry.get('trainingConfig') as StoredConfig | undefined;
-    this.stored = stored ?? { programId: 'hiit-30-30', values: {} };
-    const storedIndex = PROGRAM_CATALOG.findIndex((e) => e.program.id === this.stored.programId);
-    this.selectedIndex = storedIndex >= 0 ? storedIndex : 0;
-    this.cards = [];
+    this.stored = stored ?? { programId: 'primera-salida', values: {} };
+    this.chips = [];
+    this.adjustObjects = [];
 
-    this.add.text(CARD_X, 34, 'CADENCIA CERO', {
+    this.add.text(LEFT_X, 30, 'CADENCIA CERO', {
       fontFamily: FONT_SANS,
-      fontSize: '44px',
+      fontSize: '40px',
       fontStyle: 'bold',
       color: UI.textBright,
     });
-    this.add.text(CARD_X, 92, 'Elige a tu perseguidor y pedalea', {
+    this.add.text(LEFT_X + 318, 46, 'Campamento', {
       fontFamily: FONT_SANS,
       fontSize: '20px',
       color: UI.textMuted,
     });
 
-    PROGRAM_CATALOG.forEach((entry, i) => this.buildCard(entry, i));
-
-    this.add.text(PANEL_X, 132, 'Perfil de la horda', {
+    // Perfil y pulsera: botón arriba a la derecha, estado abajo a la izquierda.
+    makeTextButton(this, 1124, 54, 200, 42, 'Perfil y pulsera', () => this.openProfile(), 10, 18);
+    this.statusText = this.add.text(LEFT_X, 686, '', {
       fontFamily: FONT_SANS,
-      fontSize: '20px',
-      color: UI.textMuted,
+      fontSize: '15px',
+      color: UI.textDim,
     });
-    this.preview = new ProfilePreview(this, PANEL_X, 162, 600, 168);
-    this.adjustObjects = [];
+    const band = this.registry.get('band') as BandConnection;
+    const unsubscribeBand = band.onStatus(() => this.renderStatus());
+    this.renderStatus();
+
+    this.progress = new ProgressPanel(this, LEFT_X, 108, LEFT_W);
+    this.buildCard();
+    PROGRAM_CATALOG.forEach((entry, i) => this.buildChip(entry, i));
 
     const startButton = this.add
-      .rectangle(1070, 620, 300, 84, 0x1e8449)
+      .rectangle(1074, 650, 300, 84, 0x1e8449)
       .setInteractive({ useHandCursor: true });
     this.add
-      .text(1070, 620, 'EMPEZAR', {
+      .text(1074, 650, 'EMPEZAR', {
         fontFamily: FONT_SANS,
         fontSize: '36px',
         fontStyle: 'bold',
@@ -112,31 +141,39 @@ export class StartScene extends Phaser.Scene {
     startButton.on('pointerout', () => startButton.setFillStyle(0x1e8449));
     startButton.on('pointerdown', () => this.startRide());
 
-    // Perfil y pulsera: línea de estado + botón que abre el panel.
-    this.statusText = this.add.text(CARD_X, 682, '', {
-      fontFamily: FONT_SANS,
-      fontSize: '16px',
-      color: UI.textDim,
+    // El historial llega de IndexedDB cuando llega (y cambia al sembrarlo o
+    // borrarlo desde el panel dev): el campamento se rehace con él.
+    const onHistory = () => this.refreshFromHistory();
+    this.registry.events.on('changedata-sessionHistory', onHistory);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      unsubscribeBand();
+      this.registry.events.off('changedata-sessionHistory', onHistory);
     });
-    const band = this.registry.get('band') as BandConnection;
-    const unsubscribeBand = band.onStatus(() => this.renderStatus());
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => unsubscribeBand());
-    const profileButton = makeTextButton(this, 760, 682, 220, 44, 'Perfil y pulsera', () => {
-      if (this.profilePanel) return;
-      const stored = this.registry.get('riderProfileStored') as StoredRiderProfile;
-      this.profilePanel = new ProfilePanel(
-        this,
-        stored,
-        () => this.renderStatus(),
-        () => {
-          this.profilePanel = undefined;
-        },
-      );
-    });
-    void profileButton;
-    this.renderStatus();
+    this.refreshFromHistory();
+  }
 
-    this.select(this.selectedIndex);
+  update(_time: number, deltaMs: number): void {
+    this.atmosphere.update(0, deltaMs / 1000); // la niebla deriva sola
+  }
+
+  private history(): SessionRecord[] {
+    return (this.registry.get('sessionHistory') as SessionRecord[] | undefined) ?? [];
+  }
+
+  /** Redibuja el progreso y vuelve a recomendar; la selección salta a lo recomendado. */
+  private refreshFromHistory(): void {
+    const sessions = this.history();
+    const nowMs = Date.now();
+    this.progress.show(sessions, nowMs);
+    this.recommendation = recommendToday(sessions, nowMs);
+    const index = PROGRAM_CATALOG.findIndex((e) => e.program.id === this.recommendation.programId);
+    this.recommendedIndex = index >= 0 ? index : 0;
+    // Los ajustes sugeridos solo rellenan huecos: lo que el rider tocó, se respeta.
+    const values = (this.stored.values[this.recommendation.programId] ??= {});
+    for (const [id, value] of Object.entries(this.recommendation.values)) {
+      if (values[id] === undefined) values[id] = value;
+    }
+    this.select(this.recommendedIndex);
   }
 
   private renderStatus(): void {
@@ -152,46 +189,76 @@ export class StartScene extends Phaser.Scene {
     this.statusText.setColor(band.isConnected() ? UI.textMuted : UI.textDim);
   }
 
-  update(_time: number, deltaMs: number): void {
-    this.atmosphere.update(0, deltaMs / 1000); // la niebla deriva sola
+  private openProfile(): void {
+    if (this.profilePanel) return;
+    const stored = this.registry.get('riderProfileStored') as StoredRiderProfile;
+    this.profilePanel = new ProfilePanel(
+      this,
+      stored,
+      () => this.renderStatus(),
+      () => {
+        this.profilePanel = undefined;
+      },
+    );
   }
 
-  private buildCard(entry: CatalogEntry, index: number): void {
-    const y = CARD_Y0 + index * CARD_PITCH;
-    const bg = this.add
-      .rectangle(CARD_X, y, CARD_W, CARD_H, 0x161b28)
-      .setOrigin(0, 0)
-      .setInteractive({ useHandCursor: true });
-    this.add
-      .rectangle(CARD_X, y, 6, CARD_H, TARGET_COLOR[entry.program.target] ?? 0x7f8c8d)
-      .setOrigin(0, 0);
-    this.add.text(CARD_X + 24, y + 12, entry.program.name, {
+  // ---- la tarjeta de la salida -----------------------------------------------
+
+  private buildCard(): void {
+    this.cardHeading = this.add
+      .text(RIGHT_X, 108, 'SALIDA DE HOY', { fontFamily: FONT_SANS, fontSize: '13px', color: UI.textDim })
+      .setLetterSpacing(2);
+    this.add.rectangle(RIGHT_X, CARD_Y, RIGHT_W, CARD_H, CARD_BG_SELECTED).setOrigin(0, 0).setStrokeStyle(2, 0x2a3142);
+    this.cardStripe = this.add.rectangle(RIGHT_X, CARD_Y, 6, CARD_H, 0xffffff).setOrigin(0, 0);
+    this.cardName = this.add.text(RIGHT_X + 26, CARD_Y + 16, '', {
       fontFamily: FONT_SANS,
-      fontSize: '24px',
+      fontSize: '34px',
       fontStyle: 'bold',
       color: UI.textBright,
     });
-    const duration = this.add
-      .text(CARD_X + CARD_W - 16, y + 16, formatMMSS(this.adjustedDurationSec(entry)), {
-        fontFamily: FONT_MONO,
-        fontSize: '20px',
+    this.cardDuration = this.add
+      .text(RIGHT_X + RIGHT_W - 20, CARD_Y + 24, '', { fontFamily: FONT_MONO, fontSize: '24px', color: UI.textMuted })
+      .setOrigin(1, 0);
+    this.cardReason = this.add.text(RIGHT_X + 26, CARD_Y + 64, '', {
+      fontFamily: FONT_SANS,
+      fontSize: '17px',
+      color: UI.textMuted,
+      wordWrap: { width: RIGHT_W - 52 },
+    });
+    this.preview = new ProfilePreview(this, RIGHT_X + 26, CARD_Y + 108, RIGHT_W - 52, 84);
+  }
+
+  private buildChip(entry: CatalogEntry, index: number): void {
+    const n = PROGRAM_CATALOG.length;
+    const w = Math.floor((RIGHT_W - CHIP_GAP * (n - 1)) / n);
+    const x = RIGHT_X + index * (w + CHIP_GAP);
+    const rect = this.add
+      .rectangle(x, CHIPS_Y, w, CHIP_H, CARD_BG)
+      .setOrigin(0, 0)
+      .setInteractive({ useHandCursor: true });
+    const stripe = this.add
+      .rectangle(x, CHIPS_Y + CHIP_H - 4, w, 4, TARGET_COLOR[entry.program.target] ?? 0x7f8c8d)
+      .setOrigin(0, 0);
+    const label = this.add
+      .text(x + w / 2, CHIPS_Y + CHIP_H / 2 - 2, chipLabel(entry), {
+        fontFamily: FONT_SANS,
+        fontSize: '15px',
         color: UI.textMuted,
       })
-      .setOrigin(1, 0);
-    this.add.text(CARD_X + 24, y + 50, entry.description, {
-      fontFamily: FONT_SANS,
-      fontSize: '15px',
-      color: UI.textMuted,
+      .setOrigin(0.5);
+    rect.on('pointerdown', () => this.select(index));
+    rect.on('pointerover', () => {
+      if (this.selectedIndex !== index) rect.setFillStyle(0x1b2233);
     });
-
-    bg.on('pointerdown', () => this.select(index));
-    bg.on('pointerover', () => {
-      if (this.selectedIndex !== index) bg.setFillStyle(0x1b2233);
+    rect.on('pointerout', () => {
+      if (this.selectedIndex !== index) rect.setFillStyle(CARD_BG);
     });
-    bg.on('pointerout', () => {
-      if (this.selectedIndex !== index) bg.setFillStyle(0x161b28);
-    });
-    this.cards.push({ bg, duration });
+    this.chips.push({ rect, label, stripe });
+    if (index === 0) {
+      this.add
+        .text(RIGHT_X, CHIPS_Y - 24, 'OTRA SALIDA', { fontFamily: FONT_SANS, fontSize: '13px', color: UI.textDim })
+        .setLetterSpacing(2);
+    }
   }
 
   private select(index: number): void {
@@ -201,11 +268,20 @@ export class StartScene extends Phaser.Scene {
     this.stored.programId = entry.program.id;
     this.persist();
 
-    this.cards.forEach((card, i) => {
-      card.bg.setFillStyle(i === index ? 0x232b3d : 0x161b28);
-      if (i === index) card.bg.setStrokeStyle(2, 0x7ec8ff);
-      else card.bg.setStrokeStyle();
+    this.chips.forEach((chip, i) => {
+      const selected = i === index;
+      chip.rect.setFillStyle(selected ? 0x232b3d : CARD_BG);
+      if (selected) chip.rect.setStrokeStyle(2, 0x7ec8ff);
+      else chip.rect.setStrokeStyle();
+      chip.label.setColor(selected ? UI.textBright : UI.textMuted);
     });
+
+    const recommended = index === this.recommendedIndex;
+    this.cardHeading.setText(recommended ? 'SALIDA DE HOY' : 'TU ELECCIÓN DE HOY');
+    this.cardStripe.setFillStyle(TARGET_COLOR[entry.program.target] ?? 0x7f8c8d);
+    this.cardName.setText(entry.program.name);
+    this.cardReason.setText(recommended ? this.recommendation.reason : entry.description);
+    this.cardReason.setColor(recommended ? UI.info : UI.textMuted);
 
     this.rebuildAdjustments(entry);
     this.refreshPreview(entry);
@@ -235,14 +311,12 @@ export class StartScene extends Phaser.Scene {
     const values = this.valuesFor(entry);
 
     entry.adjustments.forEach((spec, row) => {
-      const y = 408 + row * 72;
-      const label = this.add.text(PANEL_X, y, spec.label, {
-        fontFamily: FONT_SANS,
-        fontSize: '22px',
-        color: UI.textMuted,
-      }).setOrigin(0, 0.5);
+      const y = ADJUST_Y0 + row * ADJUST_PITCH;
+      const label = this.add
+        .text(RIGHT_X + 26, y, spec.label, { fontFamily: FONT_SANS, fontSize: '20px', color: UI.textMuted })
+        .setOrigin(0, 0.5);
       const valueText = this.add
-        .text(1136, y, '', { fontFamily: FONT_MONO, fontSize: '28px', color: UI.textBright })
+        .text(1104, y, '', { fontFamily: FONT_MONO, fontSize: '26px', color: UI.textBright })
         .setOrigin(0.5);
       const renderValue = () =>
         valueText.setText(`${values[spec.id] ?? spec.defaultValue}${spec.unit ? ` ${spec.unit}` : ''}`);
@@ -253,8 +327,8 @@ export class StartScene extends Phaser.Scene {
         renderValue();
         this.refreshPreview(entry);
       };
-      const minus = makeTapButton(this, 1064, y, 56, '−', () => bump(-1));
-      const plus = makeTapButton(this, 1208, y, 56, '+', () => bump(1));
+      const minus = makeTapButton(this, 1032, y, 48, '−', () => bump(-1));
+      const plus = makeTapButton(this, 1176, y, 48, '+', () => bump(1));
       renderValue();
       this.adjustObjects.push(label, valueText, minus.rect, minus.label, plus.rect, plus.label);
     });
@@ -262,7 +336,7 @@ export class StartScene extends Phaser.Scene {
 
   private refreshPreview(entry: CatalogEntry): void {
     this.preview.show(this.adjustedProgram(entry));
-    this.cards[this.selectedIndex]?.duration.setText(formatMMSS(this.adjustedDurationSec(entry)));
+    this.cardDuration.setText(formatMMSS(this.adjustedDurationSec(entry)));
   }
 
   private persist(): void {
