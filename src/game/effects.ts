@@ -1,8 +1,13 @@
 import Phaser from 'phaser';
 import { RENDER } from '../config';
 
-// Partículas y viñeta: polvo tras la rueda proporcional a la velocidad y
-// salpicadura al ser atrapado. Texturas diminutas generadas al vuelo.
+// Partículas y luz: polvo tras la rueda proporcional a la velocidad, sangre
+// al ser atrapado, el charco del faro sobre el asfalto, el aliento del rider
+// en la noche fría, luciérnagas entre los matorrales y líneas de velocidad
+// cuando vas lanzado. Texturas diminutas generadas al vuelo.
+
+const SPEED_LINES_FROM_MPS = 7; // ~25 km/h
+const HEAD = { x: RENDER.playerX + 23, y: RENDER.groundY - 98 };
 
 function ensureTextures(scene: Phaser.Scene): void {
   if (scene.textures.exists('fx-dot')) return;
@@ -16,6 +21,13 @@ function ensureTextures(scene: Phaser.Scene): void {
   g.fillStyle(0xffffff, 1);
   g.fillRect(0, 0, 4, 4);
   g.generateTexture('fx-chunk', 4, 4);
+  g.clear();
+  // Charco del faro: elipse con degradado suave, cálida.
+  for (let i = 9; i >= 1; i--) {
+    g.fillStyle(0xffe2a0, 0.045);
+    g.fillEllipse(180, 40, 40 + i * 34, 10 + i * 7);
+  }
+  g.generateTexture('fx-headlight', 360, 80);
   g.destroy();
 }
 
@@ -51,9 +63,20 @@ export function ensureVignette(scene: Phaser.Scene): void {
 export class Effects {
   private readonly dust: Phaser.GameObjects.Particles.ParticleEmitter;
   private readonly blood: Phaser.GameObjects.Particles.ParticleEmitter;
+  private readonly breath: Phaser.GameObjects.Particles.ParticleEmitter;
+  private readonly fireflies: Phaser.GameObjects.Particles.ParticleEmitter;
+  private readonly speedLines: Phaser.GameObjects.Particles.ParticleEmitter;
+  private readonly headlight: Phaser.GameObjects.Image;
+  private tAlive = 0;
 
   constructor(scene: Phaser.Scene) {
     ensureTextures(scene);
+
+    this.headlight = scene.add
+      .image(RENDER.playerX + 165, RENDER.groundY - 4, 'fx-headlight')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setAlpha(0.55)
+      .setDepth(1.5);
 
     this.dust = scene.add.particles(RENDER.playerX - 34, RENDER.groundY - 3, 'fx-dot', {
       speedX: { min: -140, max: -70 },
@@ -76,15 +99,83 @@ export class Effects {
       emitting: false,
     });
     this.blood.setDepth(3.5);
+
+    // Vaho: una nubecilla cada pocos segundos que se queda atrás.
+    this.breath = scene.add.particles(HEAD.x, HEAD.y, 'fx-dot', {
+      frequency: 2600,
+      quantity: 3,
+      speedX: { min: -46, max: -18 },
+      speedY: { min: -16, max: -4 },
+      x: { min: -3, max: 3 },
+      scale: { start: 0.45, end: 1.7 },
+      alpha: { start: 0.26, end: 0 },
+      lifespan: 950,
+      tint: 0xdfe8f5,
+      emitting: false,
+    });
+    this.breath.setDepth(3.2);
+
+    // Luciérnagas: puntos que se encienden y apagan entre los matorrales.
+    this.fireflies = scene.add.particles(0, 0, 'fx-dot', {
+      emitZone: {
+        type: 'random',
+        source: {
+          getRandomPoint: (p) => {
+            p.x = Math.random() * RENDER.width;
+            p.y = 430 + Math.random() * 140;
+          },
+        },
+      },
+      frequency: 380,
+      lifespan: { min: 2400, max: 4600 },
+      speedX: { min: -12, max: 12 },
+      speedY: { min: -9, max: 9 },
+      scale: { min: 0.3, max: 0.6 },
+      alpha: { onEmit: () => 0, onUpdate: (_p, _k, t) => Math.sin(t * Math.PI) ** 2 * 0.85 },
+      tint: 0xd4ff7a,
+      blendMode: Phaser.BlendModes.ADD,
+      emitting: false,
+    });
+    this.fireflies.setDepth(1);
+
+    // Líneas de velocidad: trazos que cruzan la pantalla cuando vas lanzado.
+    this.speedLines = scene.add.particles(RENDER.width + 20, 0, 'fx-chunk', {
+      y: { min: 370, max: 650 },
+      speedX: { min: -1500, max: -1000 },
+      lifespan: 520,
+      scaleX: { min: 6, max: 14 },
+      scaleY: 0.25,
+      alpha: { start: 0.14, end: 0 },
+      tint: 0xaab4cc,
+      emitting: false,
+    });
+    this.speedLines.setDepth(1.2);
   }
 
-  update(speedMps: number): void {
+  /**
+   * @param night01 1 en noche cerrada, 0 al anochecer y al amanecer: el vaho
+   * y las luciérnagas son cosa de la noche.
+   */
+  update(speedMps: number, dt: number, night01: number): void {
+    this.tAlive += dt;
+    this.headlight.setAlpha(0.5 + Math.sin(this.tAlive * 37) * 0.03 + Math.sin(this.tAlive * 7.3) * 0.04);
+
     if (speedMps < 2) {
       this.dust.emitting = false;
-      return;
+    } else {
+      this.dust.emitting = true;
+      this.dust.frequency = Math.max(28, 130 - speedMps * 9);
     }
-    this.dust.emitting = true;
-    this.dust.frequency = Math.max(28, 130 - speedMps * 9);
+
+    this.breath.emitting = night01 > 0.3;
+    this.fireflies.emitting = night01 > 0.5;
+
+    if (speedMps > SPEED_LINES_FROM_MPS) {
+      this.speedLines.emitting = true;
+      this.speedLines.frequency = Math.max(28, 200 - (speedMps - SPEED_LINES_FROM_MPS) * 28);
+    } else {
+      this.speedLines.emitting = false;
+    }
   }
 
   /** Salpicadura al ser atrapado. */

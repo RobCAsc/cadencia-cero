@@ -56,6 +56,11 @@ export class Cyclist {
     this.gfx.setScale(1.15);
   }
 
+  /** Ángulo de biela acumulado (rad): la cámara se balancea con la pedalada. */
+  get crank(): number {
+    return this.crankAngle;
+  }
+
   update(dt: number, rpm: number, speedMps: number): void {
     this.tAlive += dt;
     this.crankAngle += (rpm / 60) * Math.PI * 2 * dt;

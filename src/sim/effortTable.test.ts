@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EFFORT } from '../config';
-import { effortFraction, playerSpeedFromEffort } from './effortTable';
+import { effortForSpeed, effortFraction, playerSpeedFromEffort } from './effortTable';
 
 const rider = { hrMaxBpm: 180, hrRestBpm: 60 };
 
@@ -49,6 +49,28 @@ describe('playerSpeedFromEffort', () => {
     for (let i = 1; i < EFFORT.kph.length; i++) {
       expect(EFFORT.kph[i] ?? 0).toBeGreaterThan(EFFORT.kph[i - 1] ?? 0);
       expect(EFFORT.effortBreakpoints[i] ?? 0).toBeGreaterThan(EFFORT.effortBreakpoints[i - 1] ?? 0);
+    }
+  });
+});
+
+describe('effortForSpeed', () => {
+  it('es la inversa de la tabla en los breakpoints y entre ellos', () => {
+    EFFORT.kph.forEach((kph, i) => {
+      expect(effortForSpeed(kph)).toBeCloseTo(EFFORT.effortBreakpoints[i] ?? -1);
+    });
+    const table = { effortBreakpoints: [0, 0.5, 1], kph: [0, 10, 40] };
+    expect(effortForSpeed(5, table)).toBeCloseTo(0.25);
+    expect(effortForSpeed(25, table)).toBeCloseTo(0.75);
+  });
+
+  it('se acota a los extremos de la tabla', () => {
+    expect(effortForSpeed(-3)).toBe(0);
+    expect(effortForSpeed(999)).toBe(1);
+  });
+
+  it('ida y vuelta: velocidad(esfuerzo(v)) ≈ v para la tabla real', () => {
+    for (const kph of [9, 12, 14, 16, 19, 24, 26, 32]) {
+      expect(playerSpeedFromEffort(effortForSpeed(kph))).toBeCloseTo(kph, 5);
     }
   });
 });

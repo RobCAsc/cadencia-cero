@@ -3,6 +3,18 @@
 export const FONT_MONO = 'Consolas, "Courier New", monospace';
 export const FONT_SANS = 'system-ui, "Segoe UI", sans-serif';
 
+/** Color por tipo de tramo, compartido por la vista previa del programa y la HUD. */
+export const KIND_COLOR: Record<string, number> = {
+  warmup: 0xf39c12,
+  steady: 0x16a085,
+  surge: 0xe74c3c,
+  recover: 0x3498db,
+  cooldown: 0x7f8c8d,
+};
+
+/** Color por zona cardíaca: índice 0 = suave, 1..5 = Z1..Z5. */
+export const ZONE_COLOR: readonly number[] = [0x3a4256, 0x5d6d7e, 0x3498db, 0x2ecc71, 0xf39c12, 0xe74c3c];
+
 export const UI = {
   textBright: '#ecf0f1',
   textMuted: '#8a90a0',

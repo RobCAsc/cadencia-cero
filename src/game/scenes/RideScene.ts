@@ -80,7 +80,7 @@ export class RideScene extends Phaser.Scene {
     this.add.image(0, 0, 'fx-vignette').setOrigin(0, 0).setDepth(5);
     proximityAudio.start();
 
-    this.hud = new Hud(this);
+    this.hud = new Hud(this, { segments: expandProgram(program), onQuit: () => this.quitRide() });
     this.banner = new CueBanner(this, (finalPip) => gameAudio.playPip(finalPip));
     // La resistencia declarada solo mueve al ciclista en modo cadencia; en
     // modo pulso el esfuerzo ya la absorbe y el control sobra.
@@ -110,8 +110,23 @@ export class RideScene extends Phaser.Scene {
 
   update(_time: number, deltaMs: number): void {
     const dt = deltaMs / 1000;
-    for (const event of this.sim.update(dt)) this.handleEvent(event, false);
+    // Tras terminar (o cortar) la salida el sim ya no avanza; el mundo sigue
+    // respirando bajo el resumen.
+    if (!this.finishedShown) for (const event of this.sim.update(dt)) this.handleEvent(event, false);
     this.draw(this.sim.state, dt);
+  }
+
+  /**
+   * Cortar la salida antes del final: se guarda lo pedaleado (una salida
+   * corta cuenta para el hábito si pasó de cinco minutos) y se muestra el
+   * resumen sin celebración ni calibración.
+   */
+  private quitRide(): void {
+    if (this.finishedShown) return;
+    const summary = this.sim.summary();
+    this.recordSession(summary, false);
+    proximityAudio.stop();
+    this.showFinished(summary, false);
   }
 
   adjustResistance(delta: number): void {
@@ -164,7 +179,10 @@ export class RideScene extends Phaser.Scene {
         break;
       case 'surgeWarning':
         // Un relámpago anuncia la oleada; la cuenta atrás la lleva el banner.
-        if (!fastForward) this.atmosphere.lightning();
+        if (!fastForward) {
+          this.atmosphere.lightning();
+          gameAudio.playThunder();
+        }
         break;
       case 'healthDepleted':
         this.vignette.setAlpha(0.16);
@@ -200,11 +218,12 @@ export class RideScene extends Phaser.Scene {
     void saveSession(record);
   }
 
-  private showFinished(summary: RideSummary): void {
+  private showFinished(summary: RideSummary, completed = true): void {
     if (this.finishedShown) return;
     this.finishedShown = true;
+    this.hud.hideQuit();
     releaseWakeLock(); // sesión terminada: la pantalla ya puede dormirse
-    gameAudio.playFinish();
+    if (completed) gameAudio.playFinish();
 
     const cx = RENDER.width / 2;
     // El dim se traga los clics para que la HUD de abajo quede inerte.
@@ -213,11 +232,11 @@ export class RideScene extends Phaser.Scene {
       .setDepth(30)
       .setInteractive();
     this.add
-      .text(cx, 170, '¡SOBREVIVISTE!', {
+      .text(cx, 170, completed ? '¡SOBREVIVISTE!' : 'SALIDA CORTADA', {
         fontFamily: FONT_SANS,
         fontSize: '64px',
         fontStyle: 'bold',
-        color: UI.good,
+        color: completed ? UI.good : UI.warn,
       })
       .setOrigin(0.5)
       .setDepth(31);
@@ -244,7 +263,7 @@ export class RideScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(31);
 
-    if (heartRateMode) {
+    if (heartRateMode && completed) {
       const note = this.applyCalibration(summary);
       if (note) {
         this.add
@@ -297,20 +316,24 @@ export class RideScene extends Phaser.Scene {
 
   private draw(state: SimState, dt: number): void {
     // La noche avanza con el programa: anochecer al salir, amanecer al terminar.
-    this.atmosphere.setProgress(state.totalSec > 0 ? state.elapsedSec / state.totalSec : 0);
+    const progress = state.totalSec > 0 ? state.elapsedSec / state.totalSec : 0;
+    const night01 = Math.max(0, Math.min((progress - 0.05) / 0.15, (0.9 - progress) / 0.1, 1));
+    this.atmosphere.setProgress(progress);
     this.atmosphere.update(state.playerSpeedKph / 3.6, dt);
 
     const crankRpm =
       state.inputMode === 'heartRate' ? state.playerSpeedKph * VISUAL_RPM_PER_KPH : state.cadenceRpm;
     this.cyclist.update(dt, crankRpm, state.playerSpeedKph / 3.6);
     this.horde.update(dt, state.gapM, state.zombieSpeedKph, state.caughtGraceSec > 0);
-    this.effects.update(state.playerSpeedKph / 3.6);
+    this.effects.update(state.playerSpeedKph / 3.6, dt, night01);
     proximityAudio.update(state.gapM, dt);
 
-    // La cámara se acerca un pelín cuando los tienes encima.
+    // La cámara se acerca un pelín cuando los tienes encima y se balancea
+    // con cada pedalada.
     const camera = this.cameras.main;
     const targetZoom = state.gapM < 20 ? 1 + ((20 - state.gapM) / 20) * 0.045 : 1;
     camera.setZoom(camera.zoom + (targetZoom - camera.zoom) * Math.min(1, dt * 3));
+    camera.scrollY = crankRpm > 5 ? Math.sin(this.cyclist.crank * 2) * 1.3 : 0;
 
     this.hud.update(state);
     this.banner.update(state);

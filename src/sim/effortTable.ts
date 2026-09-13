@@ -34,3 +34,25 @@ export function playerSpeedFromEffort(effortFrac: number, table: EffortTable = E
   if (x1 === x0) return y0;
   return y0 + ((x - x0) / (x1 - x0)) * (y1 - y0);
 }
+
+/**
+ * Inversa de la tabla: qué fracción de esfuerzo hace falta para sostener una
+ * velocidad. Es lo que la HUD enseña como zona objetivo del tramo: la zona en
+ * la que aguantas el paso de la horda.
+ */
+export function effortForSpeed(kph: number, table: EffortTable = EFFORT): number {
+  const xs = table.effortBreakpoints;
+  const ys = table.kph;
+  if (xs.length === 0 || xs.length !== ys.length) throw new Error('tabla de esfuerzo malformada');
+  const last = xs.length - 1;
+  if (kph <= (ys[0] ?? 0)) return xs[0] ?? 0;
+  if (kph >= (ys[last] ?? 0)) return xs[last] ?? 1;
+  let i = 0;
+  while (i < last - 1 && kph >= (ys[i + 1] ?? Infinity)) i++;
+  const x0 = xs[i] ?? 0;
+  const x1 = xs[i + 1] ?? x0;
+  const y0 = ys[i] ?? 0;
+  const y1 = ys[i + 1] ?? y0;
+  if (y1 === y0) return x0;
+  return x0 + ((kph - y0) / (y1 - y0)) * (x1 - x0);
+}

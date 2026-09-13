@@ -63,6 +63,34 @@ class GameAudio {
     this.tone(784, 0.3, 'triangle', 0.25, 0.32);
   }
 
+  /** Trueno tras el relámpago: ruido marrón filtrado, dos segundos de retumbo. */
+  playThunder(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime + 0.3; // la luz llega antes que el sonido
+    const len = Math.floor(ctx.sampleRate * 2.2);
+    const buffer = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < len; i++) {
+      last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02;
+      data[i] = last * 3.5 * (1 - i / len) ** 1.6;
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(90, t);
+    filter.frequency.exponentialRampToValueAtTime(260, t + 0.15);
+    filter.frequency.exponentialRampToValueAtTime(70, t + 2.2);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.001, t);
+    gain.gain.exponentialRampToValueAtTime(0.7, t + 0.1);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 2.2);
+    src.connect(filter).connect(gain).connect(ctx.destination);
+    src.start(t);
+  }
+
   private tone(
     freq: number,
     durationSec: number,
