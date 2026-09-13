@@ -54,10 +54,14 @@ export class RideSim {
 
   private caughtGraceSec = 0;
   private timesCaught = 0;
+  private timesCaughtInEasy = 0;
   private healthDepletedNotified = false;
 
   private cadenceRpmSec = 0; // ∫ rpm dt, para la cadencia media del resumen
   private heartRateBpmSec = 0; // ∫ bpm dt, para el pulso medio del resumen
+  private effortFracSec = 0; // ∫ esfuerzo dt
+  private peakEmaBpm = 0; // pulso con ventana lenta: un pico de un segundo no cuenta
+  private peakBpm = 0;
   private lastSegmentIndex = -1;
   private warnedSegmentIndex = -1;
   private ridePhase: 'riding' | 'finished' = 'riding';
@@ -125,6 +129,8 @@ export class RideSim {
 
     if (this.gapM <= 0 && this.caughtGraceSec <= 0) {
       this.timesCaught += 1;
+      const kind = this.segments[segmentIndexAt(this.segments, this.elapsedSec)]?.kind;
+      if (kind === 'warmup' || kind === 'recover' || kind === 'cooldown') this.timesCaughtInEasy += 1;
       this.healthPct = Math.max(0, this.healthPct - this.cfg.catch.healthCost);
       this.gapM = this.cfg.catch.knockbackGapM;
       this.distanceM = Math.max(0, this.distanceM - this.cfg.catch.distancePenaltyM);
@@ -140,6 +146,7 @@ export class RideSim {
     this.elapsedSec += dt;
     this.cadenceRpmSec += rpm * dt;
     this.heartRateBpmSec += bpm * dt;
+    this.effortFracSec += this.effortFrac * dt;
     this.effectiveRpm = rpm;
     this.lastPlayerKph = pKph;
     this.lastZombieKph = zKph;
@@ -217,6 +224,14 @@ export class RideSim {
       this.smoothedBpm += (this.heldBpm - this.smoothedBpm) * k;
     }
     this.effortFrac = effortFraction(this.smoothedBpm, this.rider);
+
+    // Pico sostenido: solo con lectura fresca, y a través de una ventana lenta.
+    if (!stale && this.smoothedBpm > 0) {
+      const tauPeak = this.cfg.heartRatePeakWindowSec;
+      const kp = tauPeak > 0 ? 1 - Math.exp(-dt / tauPeak) : 1;
+      this.peakEmaBpm = this.peakEmaBpm <= 0 ? this.smoothedBpm : this.peakEmaBpm + (this.smoothedBpm - this.peakEmaBpm) * kp;
+      this.peakBpm = Math.max(this.peakBpm, this.peakEmaBpm);
+    }
     return this.smoothedBpm;
   }
 
@@ -264,8 +279,11 @@ export class RideSim {
       durationSec: t,
       distanceM: this.distanceM,
       timesCaught: this.timesCaught,
+      timesCaughtInEasy: this.timesCaughtInEasy,
       avgCadenceRpm: t > 0 ? this.cadenceRpmSec / t : 0,
       avgHeartRateBpm: t > 0 ? this.heartRateBpmSec / t : 0,
+      peakHeartRateBpm: this.peakBpm,
+      avgEffortFrac: t > 0 ? this.effortFracSec / t : 0,
     };
   }
 }

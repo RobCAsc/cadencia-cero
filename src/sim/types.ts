@@ -61,8 +61,13 @@ export interface RideSummary {
   durationSec: number;
   distanceM: number;
   timesCaught: number;
+  /** Capturas en tramos suaves (calentamiento, recuperación, vuelta a la calma). */
+  timesCaughtInEasy: number;
   avgCadenceRpm: number;
   avgHeartRateBpm: number;
+  /** Mayor pulso sostenido (ventana de unos segundos) de la sesión. */
+  peakHeartRateBpm: number;
+  avgEffortFrac: number;
 }
 
 export type SimEvent =

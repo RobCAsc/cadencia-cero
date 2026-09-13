@@ -17,6 +17,12 @@ describe('effortFraction', () => {
     expect(effortFraction(0, rider)).toBe(0);
   });
 
+  it('la escala de intensidad multiplica el esfuerzo y sigue acotada', () => {
+    expect(effortFraction(120, { ...rider, effortScale: 1.1 })).toBeCloseTo(0.55);
+    expect(effortFraction(180, { ...rider, effortScale: 1.1 })).toBe(1);
+    expect(effortFraction(120, { ...rider, effortScale: 0.9 })).toBeCloseTo(0.45);
+  });
+
   it('rechaza un perfil con máximo ≤ reposo', () => {
     expect(() => effortFraction(100, { hrMaxBpm: 60, hrRestBpm: 60 })).toThrow();
   });

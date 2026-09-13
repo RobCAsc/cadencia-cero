@@ -160,6 +160,45 @@ describe('RideSim en modo pulso', () => {
     }
   });
 
+  it('el pico sostenido ignora un pico de un segundo pero registra una oleada', () => {
+    const sim = make(steady(600, 10), { heartRatePeakWindowSec: 5 });
+    beatFor(sim, 10, 120);
+    beatFor(sim, 1, 190); // un segundo de ruido del sensor
+    beatFor(sim, 10, 120);
+    const noisy = sim.state;
+    expect(noisy.heartRateBpm).toBeCloseTo(120, 0);
+    beatFor(sim, 30, 165); // una oleada real de 30 s
+    const events = beatFor(sim, 600, 100);
+    const finished = events.find((e) => e.type === 'finished');
+    if (finished?.type !== 'finished') throw new Error('unreachable');
+    expect(finished.summary.peakHeartRateBpm).toBeGreaterThan(160);
+    expect(finished.summary.peakHeartRateBpm).toBeLessThanOrEqual(165);
+  });
+
+  it('cuenta aparte las capturas en tramos suaves', () => {
+    const sim = new RideSim(
+      {
+        id: 't',
+        name: 't',
+        target: 't',
+        segments: [
+          { kind: 'recover', durationSec: 30, zombieSpeedKph: 50 },
+          { kind: 'surge', durationSec: 30, zombieSpeedKph: 50 },
+        ],
+      },
+      cfg({ initialGapM: 1, zombieRampSec: 0 }),
+      now,
+      { inputMode: 'heartRate', rider },
+    );
+    const events = beatFor(sim, 61, 60); // esfuerzo 0: te atrapan sin parar
+    const finished = events.find((e) => e.type === 'finished');
+    if (finished?.type !== 'finished') throw new Error('unreachable');
+    expect(finished.summary.timesCaught).toBeGreaterThan(2);
+    expect(finished.summary.timesCaughtInEasy).toBeGreaterThan(0);
+    expect(finished.summary.timesCaughtInEasy).toBeLessThan(finished.summary.timesCaught);
+    expect(finished.summary.avgEffortFrac).toBe(0);
+  });
+
   it('en modo cadencia el pulso se registra pero no mueve al ciclista', () => {
     const sim = new RideSim(steady(600, 10), cfg(), now, { inputMode: 'cadence', rider });
     beatFor(sim, 1, 150);

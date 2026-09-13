@@ -1,14 +1,15 @@
 import type Phaser from 'phaser';
 import type { FakeCadenceSource } from '../input/FakeCadenceSource';
 import type { FakeHeartRateSource } from '../input/FakeHeartRateSource';
-import { BleHeartRateSource, type BleStatus } from '../input/BleHeartRateSource';
+import type { BandConnection } from '../input/BandConnection';
+import type { BleStatus } from '../input/BleHeartRateSource';
 import type { HeartRateSource } from '../input/HeartRateSource';
 import type { RideScene } from '../game/scenes/RideScene';
 
 const MAX_RPM = 130;
 const MAX_BPM = 200;
 
-const STATUS_LABEL: Record<BleStatus, string> = {
+export const BLE_STATUS_LABEL: Record<BleStatus, string> = {
   idle: 'sin pulsera',
   unsupported: 'sin Web Bluetooth',
   requesting: 'eligiendo…',
@@ -35,8 +36,8 @@ export class DevPanel {
   private readonly bleButton: HTMLButtonElement;
   private readonly bleStatus: HTMLSpanElement;
   private readonly bleReadout: HTMLSpanElement;
+  private readonly band: BandConnection;
 
-  private ble: BleHeartRateSource | undefined;
   private unsubscribeLive: (() => void) | undefined;
 
   constructor(
@@ -46,6 +47,7 @@ export class DevPanel {
   ) {
     const root = document.getElementById('dev-panel');
     if (!root) throw new Error('falta #dev-panel en index.html');
+    this.band = game.registry.get('band') as BandConnection;
 
     root.innerHTML = `
       <strong>Panel dev</strong>
@@ -58,7 +60,7 @@ export class DevPanel {
       <button id="dev-skip" type="button">Saltar segmento</button>
       <span class="ble">
         <button id="dev-ble" type="button">Conectar pulsera</button>
-        <span id="dev-ble-status" class="ble-status">${STATUS_LABEL.idle}</span>
+        <span id="dev-ble-status" class="ble-status">${BLE_STATUS_LABEL.idle}</span>
         <span id="dev-ble-readout"></span>
       </span>
       <span class="hint">&uarr;/&darr; cadencia &middot; &larr;/&rarr; resistencia &middot; +/&minus; pulso &middot; 0 parar &middot; S se&ntilde;al</span>
@@ -91,16 +93,22 @@ export class DevPanel {
       skip.blur(); // que Espacio/Enter no lo re-dispare al seguir jugando
     });
     this.bleButton.addEventListener('click', () => {
-      void this.toggleBle();
+      void this.toggleBand();
       this.bleButton.blur();
     });
 
-    if (!BleHeartRateSource.isSupported()) {
-      this.bleButton.disabled = true;
-      this.showStatus('unsupported');
-    }
+    this.band.onStatus((status, detail) => this.showStatus(status, detail));
+    this.showStatus(this.band.getStatus(), this.band.getDetail());
+    if (this.band.getStatus() === 'unsupported') this.bleButton.disabled = true;
 
-    this.watchLive(this.fakeHr);
+    // La fuente activa cambia al conectar/desconectar (desde aquí o desde la
+    // pantalla de inicio); seguimos siempre a la que esté publicada.
+    this.watchLive(this.game.registry.get('heartRateSource') as HeartRateSource);
+    this.game.registry.events.on(
+      'changedata-heartRateSource',
+      (_parent: unknown, source: HeartRateSource) => this.watchLive(source),
+    );
+
     window.addEventListener('keydown', (e) => this.onKeyDown(e));
   }
 
@@ -123,41 +131,17 @@ export class DevPanel {
     this.hrReadout.textContent = clamped > 0 ? `${clamped} bpm` : 'sin pulso';
   }
 
-  /**
-   * Alterna entre el slider y la pulsera real. La fuente activa vive en el
-   * registry de Phaser bajo 'heartRateSource'; la escena la lee al empezar.
-   */
-  private async toggleBle(): Promise<void> {
-    if (this.ble) {
-      this.ble.stop();
-      this.ble = undefined;
-      this.activateHeartRate(this.fakeHr);
-      this.bleButton.textContent = 'Conectar pulsera';
-      this.showStatus('idle');
+  private async toggleBand(): Promise<void> {
+    if (this.band.isConnected()) {
+      this.band.disconnect();
       return;
     }
-    const ble = new BleHeartRateSource();
-    ble.onStatus((status, detail) => this.showStatus(status, detail));
     this.bleButton.disabled = true;
     try {
-      await ble.start(); // desde el click: gesto de usuario para el chooser
-      this.ble = ble;
-      this.activateHeartRate(ble);
-      this.bleButton.textContent = 'Desconectar pulsera';
-    } catch (err) {
-      console.warn('[ble] no se pudo conectar la pulsera', err);
+      await this.band.connect(); // desde el click: gesto de usuario para el chooser
     } finally {
       this.bleButton.disabled = false;
     }
-  }
-
-  private activateHeartRate(source: HeartRateSource): void {
-    const current = this.game.registry.get('heartRateSource') as HeartRateSource | undefined;
-    if (current === source) return;
-    if (current === this.fakeHr) this.fakeHr.stop();
-    if (source === this.fakeHr) this.fakeHr.start();
-    this.game.registry.set('heartRateSource', source);
-    this.watchLive(source);
   }
 
   private watchLive(source: HeartRateSource): void {
@@ -169,13 +153,13 @@ export class DevPanel {
   }
 
   private showStatus(status: BleStatus, detail?: string): void {
-    const name = this.ble?.getDeviceName();
+    const name = this.band.getDeviceName();
     const label =
       status === 'connected' && (detail || name)
-        ? `${STATUS_LABEL[status]}: ${detail ?? name}`
+        ? `${BLE_STATUS_LABEL[status]}: ${detail ?? name}`
         : detail && status !== 'connected'
-          ? `${STATUS_LABEL[status]} (${detail})`
-          : STATUS_LABEL[status];
+          ? `${BLE_STATUS_LABEL[status]} (${detail})`
+          : BLE_STATUS_LABEL[status];
     this.bleStatus.textContent = label;
     this.bleStatus.className = 'ble-status';
     if (status === 'connected') this.bleStatus.classList.add('connected');
@@ -183,6 +167,7 @@ export class DevPanel {
       this.bleStatus.classList.add('error');
     }
     if (status !== 'connected' && status !== 'reconnecting') this.bleReadout.textContent = '';
+    this.bleButton.textContent = status === 'connected' ? 'Desconectar pulsera' : 'Conectar pulsera';
   }
 
   private onKeyDown(e: KeyboardEvent): void {

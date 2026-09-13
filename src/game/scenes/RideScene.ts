@@ -5,7 +5,15 @@ import type { HeartRateSource } from '../../input/HeartRateSource';
 import type { TrainingProgram } from '../../sim/program';
 import { HIIT_30_30 } from '../../sim/programs/hiit-30-30';
 import { RideSim } from '../../sim/RideSim';
+import {
+  applyAdvice,
+  calibrationAdvice,
+  toSimRider,
+  withObservedPeak,
+  type StoredRiderProfile,
+} from '../../sim/riderProfile';
 import type { RideSummary, SimEvent, SimState } from '../../sim/types';
+import { saveRiderProfile } from '../../storage/riderStore';
 import { Cyclist } from '../actors/Cyclist';
 import { Horde } from '../actors/Horde';
 import { gameAudio } from '../audio';
@@ -25,6 +33,8 @@ import { releaseWakeLock } from '../wakeLock';
  * a 80 rpm). Es puro decorado; el sim no lo sabe ni le importa.
  */
 const VISUAL_RPM_PER_KPH = 80 / 26;
+
+const sign = (pct: number): string => `${pct > 0 ? '+' : ''}${pct} %`;
 
 /**
  * La escena del ride. Posee un RideSim nuevo por sesión, lo avanza una vez por
@@ -178,36 +188,77 @@ export class RideScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setDepth(31);
-    const effortLine =
-      this.sim.state.inputMode === 'heartRate'
-        ? `Pulso medio:     ${Math.round(summary.avgHeartRateBpm)} bpm`
-        : `Cadencia media:  ${Math.round(summary.avgCadenceRpm)} rpm`;
+    const heartRateMode = this.sim.state.inputMode === 'heartRate';
+    const lines = [
+      `Distancia:       ${(summary.distanceM / 1000).toFixed(2)} km`,
+      `Tiempo:          ${formatMMSS(summary.durationSec)}`,
+      `Veces alcanzado: ${summary.timesCaught}`,
+    ];
+    if (heartRateMode) {
+      lines.push(`Pulso medio:     ${Math.round(summary.avgHeartRateBpm)} bpm`);
+      lines.push(`Pico sostenido:  ${Math.round(summary.peakHeartRateBpm)} bpm`);
+    } else {
+      lines.push(`Cadencia media:  ${Math.round(summary.avgCadenceRpm)} rpm`);
+    }
     this.add
-      .text(
-        cx,
-        330,
-        [
-          `Distancia:       ${(summary.distanceM / 1000).toFixed(2)} km`,
-          `Tiempo:          ${formatMMSS(summary.durationSec)}`,
-          `Veces alcanzado: ${summary.timesCaught}`,
-          effortLine,
-        ].join('\n'),
-        { fontFamily: FONT_MONO, fontSize: '30px', color: UI.textBright, lineSpacing: 14 },
-      )
+      .text(cx, 320, lines.join('\n'), {
+        fontFamily: FONT_MONO,
+        fontSize: '28px',
+        color: UI.textBright,
+        lineSpacing: 12,
+      })
       .setOrigin(0.5)
       .setDepth(31);
 
+    if (heartRateMode) {
+      const note = this.applyCalibration(summary);
+      if (note) {
+        this.add
+          .text(cx, 448, note, { fontFamily: FONT_SANS, fontSize: '20px', color: UI.warn, align: 'center' })
+          .setOrigin(0.5)
+          .setDepth(31);
+      }
+    }
+
     const button = this.add
-      .rectangle(cx, 520, 260, 76, UI.button)
+      .rectangle(cx, 560, 260, 76, UI.button)
       .setDepth(31)
       .setInteractive({ useHandCursor: true });
     this.add
-      .text(cx, 520, 'Volver', { fontFamily: FONT_SANS, fontSize: '32px', color: UI.textBright })
+      .text(cx, 560, 'Volver', { fontFamily: FONT_SANS, fontSize: '32px', color: UI.textBright })
       .setOrigin(0.5)
       .setDepth(32);
     button.on('pointerover', () => button.setFillStyle(UI.buttonHover));
     button.on('pointerout', () => button.setFillStyle(UI.button));
     button.on('pointerdown', () => this.scene.start('StartScene'));
+  }
+
+  /**
+   * La calibración se aprende de cada sesión: un pico sostenido por encima del
+   * máximo lo sube, y ser atrapado en tramos suaves (o no acercarse nunca con
+   * esfuerzo bajo) mueve la intensidad un punto. Devuelve la nota para el
+   * resumen, o undefined si no hubo cambios.
+   */
+  private applyCalibration(summary: RideSummary): string | undefined {
+    const stored = this.registry.get('riderProfileStored') as StoredRiderProfile | undefined;
+    if (!stored) return undefined;
+    const notes: string[] = [];
+    const { profile: withPeak, raised } = withObservedPeak(stored, summary.peakHeartRateBpm);
+    if (raised) notes.push(`Máximo actualizado a ${withPeak.hrMaxBpm} bpm por el pico de hoy.`);
+    const advice = calibrationAdvice(summary);
+    const next = applyAdvice(withPeak, advice);
+    if (advice === 'lower' && next.intensityPct !== withPeak.intensityPct) {
+      notes.push(
+        `Te alcanzaron ${summary.timesCaughtInEasy} veces en tramos suaves: intensidad a ${sign(next.intensityPct)}.`,
+      );
+    } else if (advice === 'raise' && next.intensityPct !== withPeak.intensityPct) {
+      notes.push(`Sin apuros y esfuerzo bajo: intensidad a ${sign(next.intensityPct)}.`);
+    }
+    if (notes.length === 0) return undefined;
+    saveRiderProfile(next);
+    this.registry.set('riderProfileStored', next);
+    this.registry.set('riderProfile', toSimRider(next));
+    return notes.join('\n');
   }
 
   private draw(state: SimState, dt: number): void {

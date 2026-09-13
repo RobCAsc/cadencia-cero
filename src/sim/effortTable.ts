@@ -8,7 +8,8 @@ export function effortFraction(bpm: number, rider: RiderProfile = RIDER): number
   if (bpm <= 0) return 0;
   const range = rider.hrMaxBpm - rider.hrRestBpm;
   if (range <= 0) throw new Error('perfil del rider malformado: máx ≤ reposo');
-  return Math.min(1, Math.max(0, (bpm - rider.hrRestBpm) / range));
+  const raw = (bpm - rider.hrRestBpm) / range;
+  return Math.min(1, Math.max(0, raw * (rider.effortScale ?? 1)));
 }
 
 /**

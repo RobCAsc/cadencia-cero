@@ -36,20 +36,26 @@ export interface EffortTable {
 // zona (Z1 50-60 %, Z2 60-70 %, Z3 70-80 %, Z4 80-90 %, Z5 90-100 %) rinda un
 // poco más que la horda del programa que la prescribe: recuperación 9-12 km/h,
 // fondo 16-19, umbral 24, oleadas 26-32. Se retunea pedaleando de verdad.
+// Margen de calibración: los tramos suaves (horda a 9-12) se aguantan ya al
+// 45 % de esfuerzo, para que un máximo mal estimado se sienta como tensión y
+// no como injusticia.
 export const EFFORT: EffortTable = {
   effortBreakpoints: [0, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-  kph: [0, 4, 7, 11, 15, 20, 26, 32, 38],
+  kph: [0, 5, 10, 14, 18, 22, 27, 32, 38],
 };
 
 export interface RiderProfile {
   hrMaxBpm: number;
   hrRestBpm: number;
+  /** Ajuste del día sobre la fracción de esfuerzo (1 = sin ajuste). */
+  effortScale?: number;
 }
 
-/** Valores por defecto hasta que la pantalla de inicio permita ajustarlos. */
+/** Fallback si no hay perfil guardado (33 años por Tanaka). */
 export const RIDER: RiderProfile = {
-  hrMaxBpm: 190,
+  hrMaxBpm: 185,
   hrRestBpm: 60,
+  effortScale: 1,
 };
 
 /** Qué entrada mueve al ciclista. El pulso es la entrada real del proyecto. */
@@ -78,6 +84,8 @@ export interface SimConfig {
   heartRateDecayBpmPerSec: number;
   /** Constante de tiempo del suavizado del pulso (quita el jitter óptico). */
   heartRateSmoothingSec: number;
+  /** Ventana del pico sostenido (para aprender el máximo sin contar picos de ruido). */
+  heartRatePeakWindowSec: number;
   maxDtSec: number;
   initialGapM: number;
   /** Clamp del gap: prescripción sobre acumulación de ventaja. */
@@ -98,6 +106,7 @@ export const SIM: SimConfig = {
   staleHeartRateSec: 5,
   heartRateDecayBpmPerSec: 2,
   heartRateSmoothingSec: 2,
+  heartRatePeakWindowSec: 5,
   maxDtSec: 0.25,
   initialGapM: 50,
   gapMaxM: 150,

@@ -3,10 +3,13 @@ import { RENDER } from './config';
 import { DevPanel } from './dev/DevPanel';
 import { RideScene } from './game/scenes/RideScene';
 import { StartScene } from './game/scenes/StartScene';
+import { BandConnection } from './input/BandConnection';
 import { FakeCadenceSource } from './input/FakeCadenceSource';
 import { FakeHeartRateSource } from './input/FakeHeartRateSource';
 import { createCadenceSource } from './input/createCadenceSource';
 import { createHeartRateSource } from './input/createHeartRateSource';
+import { toSimRider } from './sim/riderProfile';
+import { loadRiderProfile } from './storage/riderStore';
 
 const source = createCadenceSource('fake');
 void source.start();
@@ -31,6 +34,12 @@ const game = new Phaser.Game({
 
 game.registry.set('cadenceSource', source);
 game.registry.set('heartRateSource', heartRate);
+game.registry.set('band', new BandConnection(game.registry, heartRate));
+
+// El perfil guardado en la tablet; 'riderProfile' es la vista numérica del sim.
+const stored = loadRiderProfile();
+game.registry.set('riderProfileStored', stored);
+game.registry.set('riderProfile', toSimRider(stored));
 
 if (
   (import.meta.env.DEV || location.search.includes('dev=1')) &&

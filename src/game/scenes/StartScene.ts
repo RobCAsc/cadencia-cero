@@ -8,9 +8,12 @@ import {
 import { Atmosphere } from '../atmosphere';
 import { gameAudio } from '../audio';
 import { formatMMSS } from '../format';
+import type { BandConnection } from '../../input/BandConnection';
+import type { StoredRiderProfile } from '../../sim/riderProfile';
+import { ProfilePanel } from '../start/ProfilePanel';
 import { ProfilePreview } from '../start/ProfilePreview';
 import { FONT_MONO, FONT_SANS, UI } from '../theme';
-import { makeTapButton } from '../uiButton';
+import { makeTapButton, makeTextButton } from '../uiButton';
 import { acquireWakeLock } from '../wakeLock';
 
 const TARGET_COLOR: Record<string, number> = {
@@ -54,6 +57,8 @@ export class StartScene extends Phaser.Scene {
   // Objetos de las filas de ajuste, destruidos y recreados al cambiar de
   // programa. Sin Container: el hit-test de Phaser no ve botones re-parentados.
   private adjustObjects: Phaser.GameObjects.GameObject[] = [];
+  private statusText!: Phaser.GameObjects.Text;
+  private profilePanel: ProfilePanel | undefined;
 
   constructor() {
     super('StartScene');
@@ -107,13 +112,44 @@ export class StartScene extends Phaser.Scene {
     startButton.on('pointerout', () => startButton.setFillStyle(0x1e8449));
     startButton.on('pointerdown', () => this.startRide());
 
-    this.add.text(CARD_X, 682, 'Entrada: cadencia simulada (panel dev)', {
+    // Perfil y pulsera: línea de estado + botón que abre el panel.
+    this.statusText = this.add.text(CARD_X, 682, '', {
       fontFamily: FONT_SANS,
       fontSize: '16px',
       color: UI.textDim,
     });
+    const band = this.registry.get('band') as BandConnection;
+    const unsubscribeBand = band.onStatus(() => this.renderStatus());
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => unsubscribeBand());
+    const profileButton = makeTextButton(this, 760, 682, 220, 44, 'Perfil y pulsera', () => {
+      if (this.profilePanel) return;
+      const stored = this.registry.get('riderProfileStored') as StoredRiderProfile;
+      this.profilePanel = new ProfilePanel(
+        this,
+        stored,
+        () => this.renderStatus(),
+        () => {
+          this.profilePanel = undefined;
+        },
+      );
+    });
+    void profileButton;
+    this.renderStatus();
 
     this.select(this.selectedIndex);
+  }
+
+  private renderStatus(): void {
+    const band = this.registry.get('band') as BandConnection;
+    const p = this.registry.get('riderProfileStored') as StoredRiderProfile;
+    const bandText = band.isConnected()
+      ? `Pulsera: ${band.getDeviceName() ?? 'conectada'}`
+      : 'Pulsera: sin conectar';
+    const sign = p.intensityPct > 0 ? '+' : '';
+    this.statusText.setText(
+      `${bandText}  ·  ${p.ageYears} años  ·  reposo ${p.hrRestBpm}  ·  máx ${p.hrMaxBpm}  ·  intensidad ${sign}${p.intensityPct} %`,
+    );
+    this.statusText.setColor(band.isConnected() ? UI.textMuted : UI.textDim);
   }
 
   update(_time: number, deltaMs: number): void {
@@ -234,6 +270,7 @@ export class StartScene extends Phaser.Scene {
   }
 
   private startRide(): void {
+    if (this.profilePanel) return; // el panel está abierto: el dim se traga el toque
     const entry = PROGRAM_CATALOG[this.selectedIndex];
     if (!entry) return;
     this.registry.set('selectedProgram', this.adjustedProgram(entry));
