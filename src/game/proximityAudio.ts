@@ -1,18 +1,21 @@
 import { gameAudio } from './audio';
 
 // La banda sonora de la persecución es tu propio pulso: un drone grave que
-// crece cuando la horda se acerca y un latido que acelera bajo los 30 m.
+// crece cuando la horda se acerca, un latido que acelera bajo los 30 m, y
+// gruñidos sueltos que llegan de la manada cuanto más cerca está.
 // Sintetizado en WebAudio, cero assets.
 
 const DRONE_MAX_GAIN = 0.055;
 const DRONE_RANGE_M = 60;
 const HEARTBEAT_RANGE_M = 30;
+const GROAN_RANGE_M = 70;
 
 class ProximityAudio {
   private ctx: AudioContext | null = null;
   private droneGain: GainNode | null = null;
   private oscillators: OscillatorNode[] = [];
   private nextBeatAt = 0;
+  private nextGroanAt = 0;
   private running = false;
 
   start(): void {
@@ -38,6 +41,7 @@ class ProximityAudio {
 
     this.droneGain = gain;
     this.nextBeatAt = 0;
+    this.nextGroanAt = ctx.currentTime + 3;
     this.running = true;
   }
 
@@ -60,6 +64,13 @@ class ProximityAudio {
       }
     } else {
       this.nextBeatAt = 0; // late el próximo tick en cuanto entre en rango
+    }
+
+    // Gruñidos: más seguidos y más presentes cuanto más cerca.
+    const near = 1 - Math.min(1, Math.max(0, gapM) / GROAN_RANGE_M);
+    if (near > 0.05 && ctx.currentTime >= this.nextGroanAt) {
+      this.groan(0.08 + near * 0.3, near);
+      this.nextGroanAt = ctx.currentTime + 1.5 + (1 - near) * 5 + Math.random() * 2;
     }
   }
 
@@ -90,6 +101,43 @@ class ProximityAudio {
     osc.connect(gain).connect(ctx.destination);
     osc.start(t);
     osc.stop(t + 0.16);
+  }
+
+  /** Un gruñido: diente de sierra grave con vibrato, filtrado y con ataque lento. */
+  private groan(volume: number, near: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const dur = 0.5 + Math.random() * 0.6;
+    const base = 70 + Math.random() * 50;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(base, t);
+    osc.frequency.linearRampToValueAtTime(base * (0.8 + Math.random() * 0.3), t + dur);
+
+    const vibrato = ctx.createOscillator();
+    vibrato.frequency.value = 5 + Math.random() * 4;
+    const vibratoGain = ctx.createGain();
+    vibratoGain.gain.value = 6;
+    vibrato.connect(vibratoGain).connect(osc.frequency);
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(220 + near * 500, t);
+    filter.frequency.exponentialRampToValueAtTime(140, t + dur);
+    filter.Q.value = 3;
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(volume, t + dur * 0.35);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+
+    osc.connect(filter).connect(gain).connect(ctx.destination);
+    osc.start(t);
+    vibrato.start(t);
+    osc.stop(t + dur + 0.05);
+    vibrato.stop(t + dur + 0.05);
   }
 }
 

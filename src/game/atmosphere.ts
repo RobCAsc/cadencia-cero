@@ -2,29 +2,77 @@ import Phaser from 'phaser';
 import { RENDER } from '../config';
 import { lcg } from './rng';
 
-// Atmósfera nocturna en siluetas: cielo con luna, ruinas lejanas, árboles
-// muertos, matorral, carretera y niebla en tres planos. Todo dibujado por
-// código a texturas generadas una vez; el scroll es proporcional a la
-// velocidad del jugador y la niebla deriva sola con el "viento".
+// Atmósfera en siluetas que avanza con el programa: la salida empieza al
+// anochecer, el grueso del trabajo es noche cerrada, y la vuelta a la calma
+// es el amanecer. Terminar la sesión es ver salir el sol. Todo dibujado por
+// código: las siluetas se generan en blanco una vez y se tintan por fase; el
+// cielo se redibuja (barato) cuando cambia; luna y sol son texturas que se
+// mueven. El scroll es proporcional a la velocidad del jugador y la niebla
+// deriva sola con el "viento".
 
 const HORIZON_Y = 600;
 
-// Paleta (de atrás hacia adelante, cada capa más oscura).
-const SKY_TOP = 0x06081a;
-const SKY_MID = 0x131a38;
-const SKY_HORIZON = 0x3a4468;
-const MOON_DISC = 0xdfe9cc;
-const MOON_GLOW = 0xcfe3c0;
-const STAR = 0xcdd8f0;
-const CLOUD = 0x8fa0c8;
-const FAR_SIL = 0x131730;
-const MID_SIL = 0x0b0e20;
-const NEAR_SIL = 0x06070f;
+interface Phase {
+  t: number;
+  skyTop: number;
+  skyMid: number;
+  skyHorizon: number;
+  far: number;
+  mid: number;
+  near: number;
+  fog: number;
+  stars: number;
+  moon: number;
+  sun: number;
+}
+
+// Fotogramas clave de la noche. Las siluetas van un tier más claras que el
+// fondo en cada fase o desaparecen; la niebla toma el color de la luz.
+const PHASES: readonly Phase[] = [
+  { t: 0.0, skyTop: 0x1a1230, skyMid: 0x4a2848, skyHorizon: 0xc8663a, far: 0x2a1c3a, mid: 0x1a1128, near: 0x0e0a16, fog: 0x8a6a78, stars: 0.15, moon: 0.55, sun: 0 },
+  { t: 0.2, skyTop: 0x06081a, skyMid: 0x131a38, skyHorizon: 0x3a4468, far: 0x131730, mid: 0x0b0e20, near: 0x06070f, fog: 0x7285ad, stars: 1, moon: 1, sun: 0 },
+  { t: 0.78, skyTop: 0x06081a, skyMid: 0x131a38, skyHorizon: 0x3a4468, far: 0x131730, mid: 0x0b0e20, near: 0x06070f, fog: 0x7285ad, stars: 1, moon: 1, sun: 0 },
+  { t: 0.9, skyTop: 0x0e1834, skyMid: 0x2a3a66, skyHorizon: 0x8a6070, far: 0x1c2040, mid: 0x12162c, near: 0x0a0c18, fog: 0x8a86a8, stars: 0.35, moon: 0.5, sun: 0.15 },
+  { t: 1.0, skyTop: 0x2c4c86, skyMid: 0x7888b4, skyHorizon: 0xf2b872, far: 0x3c3a68, mid: 0x28264a, near: 0x181632, fog: 0xc8a898, stars: 0, moon: 0, sun: 1 },
+];
+
 const ROAD_BASE = 0x0d0f1c;
 const ROAD_EDGE = 0x353d63;
 const ROAD_DASH = 0x343b60;
 const ROAD_CRACK = 0x04050b;
-const FOG = 0x7285ad;
+const WHITE = 0xffffff;
+const LIGHTNING = 0xdde4ff;
+
+export function lerpColor(a: number, b: number, t: number): number {
+  const k = Math.max(0, Math.min(1, t));
+  const r = ((a >> 16) & 0xff) + (((b >> 16) & 0xff) - ((a >> 16) & 0xff)) * k;
+  const g = ((a >> 8) & 0xff) + (((b >> 8) & 0xff) - ((a >> 8) & 0xff)) * k;
+  const bl = (a & 0xff) + ((b & 0xff) - (a & 0xff)) * k;
+  return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(bl);
+}
+
+function phaseAt(t: number): Phase {
+  const x = Math.max(0, Math.min(1, t));
+  let i = 0;
+  while (i < PHASES.length - 2 && x >= (PHASES[i + 1]?.t ?? 1)) i++;
+  const a = PHASES[i]!;
+  const b = PHASES[i + 1]!;
+  const k = b.t > a.t ? (x - a.t) / (b.t - a.t) : 0;
+  const lerp = (p: number, q: number) => p + (q - p) * k;
+  return {
+    t: x,
+    skyTop: lerpColor(a.skyTop, b.skyTop, k),
+    skyMid: lerpColor(a.skyMid, b.skyMid, k),
+    skyHorizon: lerpColor(a.skyHorizon, b.skyHorizon, k),
+    far: lerpColor(a.far, b.far, k),
+    mid: lerpColor(a.mid, b.mid, k),
+    near: lerpColor(a.near, b.near, k),
+    fog: lerpColor(a.fog, b.fog, k),
+    stars: lerp(a.stars, b.stars),
+    moon: lerp(a.moon, b.moon),
+    sun: lerp(a.sun, b.sun),
+  };
+}
 
 function fillVerticalGradient(
   g: Phaser.GameObjects.Graphics,
@@ -34,64 +82,74 @@ function fillVerticalGradient(
   h: number,
   from: number,
   to: number,
-  steps = 48,
+  steps = 40,
 ): void {
-  const a = Phaser.Display.Color.ValueToColor(from);
-  const b = Phaser.Display.Color.ValueToColor(to);
   const strip = h / steps;
   for (let i = 0; i < steps; i++) {
-    const c = Phaser.Display.Color.Interpolate.ColorWithColor(a, b, steps - 1, i);
-    g.fillStyle(Phaser.Display.Color.GetColor(c.r, c.g, c.b), 1);
+    g.fillStyle(lerpColor(from, to, i / (steps - 1)), 1);
     g.fillRect(x, y + i * strip, w, strip + 1);
   }
 }
 
-function makeSkyTexture(scene: Phaser.Scene): void {
+function makeStarsTexture(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false);
   const rnd = lcg(1337);
-
-  fillVerticalGradient(g, 0, 0, RENDER.width, 400, SKY_TOP, SKY_MID);
-  fillVerticalGradient(g, 0, 400, RENDER.width, HORIZON_Y - 400, SKY_MID, SKY_HORIZON);
-  g.fillStyle(SKY_TOP, 1);
-  g.fillRect(0, HORIZON_Y, RENDER.width, RENDER.height - HORIZON_Y);
-
-  // Estrellas, más densas arriba.
-  for (let i = 0; i < 90; i++) {
+  for (let i = 0; i < 110; i++) {
     const x = rnd() * RENDER.width;
-    const y = rnd() * rnd() * 400;
-    g.fillStyle(STAR, 0.15 + rnd() * 0.55);
+    const y = rnd() * rnd() * 420;
+    g.fillStyle(0xcdd8f0, 0.15 + rnd() * 0.55);
     g.fillRect(x, y, rnd() < 0.2 ? 2 : 1, rnd() < 0.2 ? 2 : 1);
   }
+  g.generateTexture('atm-stars', RENDER.width, 440);
+  g.destroy();
+}
 
-  // Luna baja sobre el lado de la horda, con halo suave.
-  const mx = 330;
-  const my = 175;
-  for (let i = 8; i >= 1; i--) {
-    g.fillStyle(MOON_GLOW, 0.016 * (9 - i));
-    g.fillCircle(mx, my, 58 + i * 13);
-  }
-  g.fillStyle(MOON_DISC, 1);
-  g.fillCircle(mx, my, 58);
-  g.fillStyle(0xc3d4ae, 0.55);
-  g.fillCircle(mx - 16, my - 10, 9);
-  g.fillCircle(mx + 12, my + 8, 6);
-  g.fillCircle(mx - 2, my + 22, 5);
-
-  // Jirones de nube cruzando la zona de la luna.
-  g.fillStyle(CLOUD, 0.06);
-  g.fillEllipse(mx + 40, my - 30, 280, 16);
-  g.fillEllipse(mx - 60, my + 26, 340, 14);
+function makeCloudsTexture(scene: Phaser.Scene): void {
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  g.fillStyle(WHITE, 0.06);
+  g.fillEllipse(370, 145, 280, 16);
+  g.fillEllipse(270, 200, 340, 14);
   g.fillEllipse(820, 120, 380, 12);
   g.fillEllipse(1050, 240, 300, 10);
+  g.fillEllipse(600, 260, 260, 9);
+  g.generateTexture('atm-clouds', RENDER.width, 300);
+  g.destroy();
+}
 
-  g.generateTexture('atm-sky', RENDER.width, RENDER.height);
+function makeMoonTexture(scene: Phaser.Scene): void {
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  const c = 170;
+  for (let i = 8; i >= 1; i--) {
+    g.fillStyle(0xcfe3c0, 0.016 * (9 - i));
+    g.fillCircle(c, c, 58 + i * 13);
+  }
+  g.fillStyle(0xdfe9cc, 1);
+  g.fillCircle(c, c, 58);
+  g.fillStyle(0xc3d4ae, 0.55);
+  g.fillCircle(c - 16, c - 10, 9);
+  g.fillCircle(c + 12, c + 8, 6);
+  g.fillCircle(c - 2, c + 22, 5);
+  g.generateTexture('atm-moon', c * 2, c * 2);
+  g.destroy();
+}
+
+function makeSunTexture(scene: Phaser.Scene): void {
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  const c = 220;
+  for (let i = 10; i >= 1; i--) {
+    g.fillStyle(0xffc070, 0.03 * (11 - i));
+    g.fillCircle(c, c, 44 + i * 17);
+  }
+  g.fillStyle(0xfff0c0, 1);
+  g.fillCircle(c, c, 44);
+  g.generateTexture('atm-sun', c * 2, c * 2);
   g.destroy();
 }
 
 function makeFarTexture(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false);
   const H = 260;
-  g.fillStyle(FAR_SIL, 1);
+  g.fillStyle(WHITE, 1);
 
   // Skyline en ruinas: cada edificio son rects apilados con tope roto.
   const buildings: Array<[number, number, number]> = [
@@ -106,7 +164,6 @@ function makeFarTexture(scene: Phaser.Scene): void {
   ];
   for (const [x, w, h] of buildings) {
     g.fillRect(x, H - h, w, h);
-    // Tope roto: dientes desiguales.
     g.fillRect(x + 4, H - h - 10, w * 0.3, 10);
     g.fillRect(x + w * 0.55, H - h - 16, w * 0.28, 16);
   }
@@ -121,7 +178,7 @@ function makeFarTexture(scene: Phaser.Scene): void {
   g.fillRect(336, H - 116, 28, 4);
   g.fillRect(496, H - 132, 4, 132);
   g.fillRect(484, H - 128, 28, 4);
-  g.lineStyle(2, FAR_SIL, 1);
+  g.lineStyle(2, WHITE, 1);
   g.beginPath();
   g.moveTo(350, H - 112);
   for (let i = 1; i <= 8; i++) {
@@ -143,7 +200,7 @@ function drawDeadTree(
 ): void {
   const top = base - h;
   g.fillTriangle(x - 5, base, x + 5, base, x + lean, top);
-  g.lineStyle(3, MID_SIL, 1);
+  g.lineStyle(3, WHITE, 1);
   const branches: Array<[number, number, number]> = [
     [0.35, -34, -18],
     [0.5, 30, -22],
@@ -161,14 +218,15 @@ function drawDeadTree(
 function makeMidTexture(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false);
   const H = 230;
-  const B = H; // línea de suelo de la capa
+  const B = H;
+  g.fillStyle(WHITE, 1);
 
   drawDeadTree(g, 70, B, 170, 14);
   drawDeadTree(g, 340, B, 140, -10);
   drawDeadTree(g, 560, B, 185, 8);
 
   // Coche abandonado con el cofre abierto.
-  g.fillStyle(MID_SIL, 1);
+  g.fillStyle(WHITE, 1);
   g.fillRect(160, B - 26, 92, 18);
   g.fillPoints(
     [
@@ -184,12 +242,11 @@ function makeMidTexture(scene: Phaser.Scene): void {
   g.fillCircle(234, B - 8, 9);
 
   // Lápidas y una cruz.
-  const graves: Array<[number, number]> = [
+  for (const [gx, gh] of [
     [262, 18],
     [282, 24],
     [304, 15],
-  ];
-  for (const [gx, gh] of graves) {
+  ] as const) {
     g.fillRect(gx, B - gh, 12, gh);
     g.fillCircle(gx + 6, B - gh, 6);
   }
@@ -197,8 +254,7 @@ function makeMidTexture(scene: Phaser.Scene): void {
   g.fillRect(317, B - 22, 18, 4);
 
   // Valla vencida.
-  const posts = [430, 456, 482, 508];
-  posts.forEach((px, i) => {
+  [430, 456, 482, 508].forEach((px, i) => {
     if (i === 2) {
       g.fillPoints(
         [
@@ -232,15 +288,13 @@ function makeNearTexture(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false);
   const H = 100;
   const rnd = lcg(4242);
-  g.fillStyle(NEAR_SIL, 1);
+  g.fillStyle(WHITE, 1);
 
-  // Matorral bajo: circunferencias solapadas.
   for (let i = 0; i < 30; i++) {
     const x = rnd() * 512;
     const r = 9 + rnd() * 15;
     g.fillCircle(x, H - r * 0.4, r);
   }
-  // Escombros.
   for (let i = 0; i < 8; i++) {
     const x = rnd() * 512;
     const s = 6 + rnd() * 12;
@@ -282,7 +336,6 @@ function makeRoadTexture(scene: Phaser.Scene): void {
   g.fillStyle(0x171b33, 1);
   g.fillRect(0, 3, 512, 1);
 
-  // Línea central desgastada.
   const dashes: Array<[number, number, number]> = [
     [8, 46, 0.85],
     [136, 30, 0.5],
@@ -294,7 +347,6 @@ function makeRoadTexture(scene: Phaser.Scene): void {
     g.fillRect(x, 58, w, 5);
   }
 
-  // Grietas.
   g.lineStyle(2, ROAD_CRACK, 1);
   for (const startX of [70, 250, 430]) {
     g.beginPath();
@@ -309,7 +361,6 @@ function makeRoadTexture(scene: Phaser.Scene): void {
     g.strokePath();
   }
 
-  // Manchas oscuras y gravilla.
   g.fillStyle(0x170d13, 0.5);
   g.fillEllipse(180, 92, 60, 14);
   g.fillEllipse(400, 40, 44, 10);
@@ -329,11 +380,11 @@ function makeFogTexture(scene: Phaser.Scene): void {
     const x = rnd() * 512;
     const y = 50 + rnd() * 70;
     const r = 26 + rnd() * 44;
-    g.fillStyle(FOG, 0.035);
+    g.fillStyle(WHITE, 0.035);
     g.fillCircle(x, y, r);
   }
   for (let i = 0; i < 5; i++) {
-    g.fillStyle(FOG, 0.03);
+    g.fillStyle(WHITE, 0.03);
     g.fillEllipse(rnd() * 512, 70 + rnd() * 50, 220 + rnd() * 160, 26 + rnd() * 18);
   }
   g.generateTexture('atm-fog', 512, 160);
@@ -341,8 +392,11 @@ function makeFogTexture(scene: Phaser.Scene): void {
 }
 
 function ensureTextures(scene: Phaser.Scene): void {
-  if (scene.textures.exists('atm-sky')) return;
-  makeSkyTexture(scene);
+  if (scene.textures.exists('atm-stars')) return;
+  makeStarsTexture(scene);
+  makeCloudsTexture(scene);
+  makeMoonTexture(scene);
+  makeSunTexture(scene);
   makeFarTexture(scene);
   makeMidTexture(scene);
   makeNearTexture(scene);
@@ -351,6 +405,11 @@ function ensureTextures(scene: Phaser.Scene): void {
 }
 
 export class Atmosphere {
+  private readonly sky: Phaser.GameObjects.Graphics;
+  private readonly stars: Phaser.GameObjects.Image;
+  private readonly clouds: Phaser.GameObjects.TileSprite;
+  private readonly moon: Phaser.GameObjects.Image;
+  private readonly sun: Phaser.GameObjects.Image;
   private readonly far: Phaser.GameObjects.TileSprite;
   private readonly mid: Phaser.GameObjects.TileSprite;
   private readonly near: Phaser.GameObjects.TileSprite;
@@ -359,11 +418,19 @@ export class Atmosphere {
   private readonly fogMid: Phaser.GameObjects.TileSprite;
   private readonly fogFront: Phaser.GameObjects.TileSprite;
 
+  private progress = 0.3;
+  private drawnProgress = -1;
+  private flash = 0;
+
   constructor(scene: Phaser.Scene, withFrontFog = true) {
     ensureTextures(scene);
     const w = RENDER.width;
 
-    scene.add.image(0, 0, 'atm-sky').setOrigin(0, 0);
+    this.sky = scene.add.graphics({ x: 0, y: 0 });
+    this.stars = scene.add.image(0, 0, 'atm-stars').setOrigin(0, 0);
+    this.clouds = scene.add.tileSprite(0, 0, w, 300, 'atm-clouds').setOrigin(0, 0);
+    this.moon = scene.add.image(330, 175, 'atm-moon');
+    this.sun = scene.add.image(1000, 640, 'atm-sun').setBlendMode(Phaser.BlendModes.ADD);
     this.far = scene.add.tileSprite(0, HORIZON_Y - 260, w, 260, 'atm-far').setOrigin(0, 0);
     // La niebla abraza el horizonte, sin lavar las siluetas cercanas.
     this.fogBack = scene.add
@@ -384,6 +451,18 @@ export class Atmosphere {
       .setOrigin(0, 0)
       .setAlpha(withFrontFog ? 0.18 : 0)
       .setDepth(4);
+
+    this.applyPhase(true);
+  }
+
+  /** 0 = anochecer (arranque), 1 = amanecer (fin del programa). */
+  setProgress(t01: number): void {
+    this.progress = Math.max(0, Math.min(1, t01));
+  }
+
+  /** Un relámpago: el cielo y las siluetas se blanquean un instante. */
+  lightning(): void {
+    this.flash = 1;
   }
 
   update(playerSpeedMps: number, dtSec: number): void {
@@ -392,9 +471,48 @@ export class Atmosphere {
     this.near.tilePositionX += px * RENDER.nearFactor;
     this.mid.tilePositionX += px * 0.38;
     this.far.tilePositionX += px * 0.12;
+    this.clouds.tilePositionX += px * 0.02 + 1.2 * dtSec;
     // La niebla scrollea poco con el mundo y deriva sola con el viento.
     this.fogBack.tilePositionX += px * 0.1 + 2.5 * dtSec;
     this.fogMid.tilePositionX += px * 0.35 + 5 * dtSec;
     this.fogFront.tilePositionX += px * 0.8 + 9 * dtSec;
+
+    // El cielo se redibuja solo cuando la fase cambió lo bastante (cada pocos
+    // segundos de sesión) o mientras dura un relámpago.
+    const flashing = this.flash > 0.005;
+    if (flashing) this.flash *= Math.exp(-7 * dtSec);
+    this.applyPhase(flashing);
+  }
+
+  private applyPhase(force: boolean): void {
+    if (!force && Math.abs(this.progress - this.drawnProgress) < 0.002) return;
+    this.drawnProgress = this.progress;
+    const p = phaseAt(this.progress);
+    const f = Math.min(1, this.flash) * 0.75;
+
+    const g = this.sky;
+    g.clear();
+    fillVerticalGradient(g, 0, 0, RENDER.width, 400, lerpColor(p.skyTop, LIGHTNING, f), lerpColor(p.skyMid, LIGHTNING, f));
+    fillVerticalGradient(g, 0, 400, RENDER.width, HORIZON_Y - 400, lerpColor(p.skyMid, LIGHTNING, f), lerpColor(p.skyHorizon, LIGHTNING, f));
+    g.fillStyle(p.skyTop, 1);
+    g.fillRect(0, HORIZON_Y, RENDER.width, RENDER.height - HORIZON_Y);
+
+    this.stars.setAlpha(p.stars * (1 - f));
+    this.clouds.setTint(p.fog);
+
+    // La luna cruza el cielo en arco por la izquierda y se pone tras las ruinas.
+    const theta = Math.PI * Math.min(1, this.progress / 0.9);
+    this.moon.setPosition(420 - Math.cos(theta) * 260, 420 - Math.sin(theta) * 280);
+    this.moon.setAlpha(p.moon);
+
+    // El sol sale por delante del ciclista en el último tramo.
+    const rise = Math.max(0, (this.progress - 0.84) / 0.16);
+    this.sun.setPosition(1000, 640 - rise * 190);
+    this.sun.setAlpha(p.sun);
+
+    this.far.setTint(lerpColor(p.far, LIGHTNING, f * 0.6));
+    this.mid.setTint(lerpColor(p.mid, LIGHTNING, f * 0.5));
+    this.near.setTint(lerpColor(p.near, LIGHTNING, f * 0.4));
+    for (const fog of [this.fogBack, this.fogMid, this.fogFront]) fog.setTint(p.fog);
   }
 }

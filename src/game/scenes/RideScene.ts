@@ -162,6 +162,10 @@ export class RideScene extends Phaser.Scene {
       case 'staleHeartRate':
         if (!fastForward) this.banner.showNotice('Sin señal de la pulsera', 3000, UI.warn);
         break;
+      case 'surgeWarning':
+        // Un relámpago anuncia la oleada; la cuenta atrás la lleva el banner.
+        if (!fastForward) this.atmosphere.lightning();
+        break;
       case 'healthDepleted':
         this.vignette.setAlpha(0.16);
         break;
@@ -292,12 +296,14 @@ export class RideScene extends Phaser.Scene {
   }
 
   private draw(state: SimState, dt: number): void {
+    // La noche avanza con el programa: anochecer al salir, amanecer al terminar.
+    this.atmosphere.setProgress(state.totalSec > 0 ? state.elapsedSec / state.totalSec : 0);
     this.atmosphere.update(state.playerSpeedKph / 3.6, dt);
 
     const crankRpm =
       state.inputMode === 'heartRate' ? state.playerSpeedKph * VISUAL_RPM_PER_KPH : state.cadenceRpm;
     this.cyclist.update(dt, crankRpm, state.playerSpeedKph / 3.6);
-    this.horde.update(dt, state.gapM, state.zombieSpeedKph / 3.6, state.caughtGraceSec > 0);
+    this.horde.update(dt, state.gapM, state.zombieSpeedKph, state.caughtGraceSec > 0);
     this.effects.update(state.playerSpeedKph / 3.6);
     proximityAudio.update(state.gapM, dt);
 
