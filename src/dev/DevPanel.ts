@@ -49,6 +49,7 @@ export class DevPanel {
 
     root.innerHTML = `
       <strong>Panel dev</strong>
+      <label>Entrada <select id="dev-input"><option value="heartRate">pulso</option><option value="cadence">cadencia</option></select></label>
       <label>Cadencia <input id="dev-cadence" type="range" min="0" max="${MAX_RPM}" step="1" value="0" /></label>
       <span id="dev-readout">0 rpm</span>
       <label><input id="dev-emit" type="checkbox" checked /> Emitir muestras</label>
@@ -74,7 +75,14 @@ export class DevPanel {
     this.bleStatus = q<HTMLSpanElement>('#dev-ble-status');
     this.bleReadout = q<HTMLSpanElement>('#dev-ble-readout');
     const skip = q<HTMLButtonElement>('#dev-skip');
+    const inputSelect = q<HTMLSelectElement>('#dev-input');
 
+    // La entrada elegida la lee RideScene al empezar cada sesión.
+    inputSelect.value = (this.game.registry.get('inputMode') as string | undefined) ?? 'heartRate';
+    inputSelect.addEventListener('change', () => {
+      this.game.registry.set('inputMode', inputSelect.value);
+      inputSelect.blur();
+    });
     this.slider.addEventListener('input', () => this.setCadence(Number(this.slider.value)));
     this.emitToggle.addEventListener('change', () => this.fake.setEmitting(this.emitToggle.checked));
     this.hrSlider.addEventListener('input', () => this.setBpm(Number(this.hrSlider.value)));

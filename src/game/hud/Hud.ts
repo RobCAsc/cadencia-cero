@@ -77,11 +77,21 @@ export class Hud {
     );
     this.hordeSpeedText.setText(`horda a ${state.zombieSpeedKph.toFixed(0)} km/h`);
 
-    this.cadenceText.setText(`${Math.round(state.cadenceRpm)} rpm`);
-    this.cadenceText.setColor(state.cadenceStale ? UI.textDim : UI.textBright);
-    this.statsText.setText(
-      `${state.playerSpeedKph.toFixed(1)} km/h\n${(state.distanceM / 1000).toFixed(2)} km`,
-    );
+    if (state.inputMode === 'heartRate') {
+      // El pulso es la entrada: va donde iba la cadencia, con el esfuerzo al lado.
+      const bpm = state.heartRateBpm > 0 ? `${Math.round(state.heartRateBpm)}` : '––';
+      this.cadenceText.setText(`♥ ${bpm}`);
+      this.cadenceText.setColor(state.heartRateStale ? UI.textDim : UI.danger);
+      this.statsText.setText(
+        `${state.playerSpeedKph.toFixed(1)} km/h · ${Math.round(state.effortFrac * 100)} %\n${(state.distanceM / 1000).toFixed(2)} km`,
+      );
+    } else {
+      this.cadenceText.setText(`${Math.round(state.cadenceRpm)} rpm`);
+      this.cadenceText.setColor(state.cadenceStale ? UI.textDim : UI.textBright);
+      this.statsText.setText(
+        `${state.playerSpeedKph.toFixed(1)} km/h\n${(state.distanceM / 1000).toFixed(2)} km`,
+      );
+    }
 
     const seg = state.segment;
     const segName =

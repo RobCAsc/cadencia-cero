@@ -1,4 +1,5 @@
-import { SIM, type SimConfig } from '../config';
+import { RIDER, SIM, type InputMode, type RiderProfile, type SimConfig } from '../config';
+import { effortFraction, playerSpeedFromEffort } from './effortTable';
 import {
   expandProgram,
   segmentIndexAt,
@@ -8,7 +9,13 @@ import {
   type TrainingProgram,
 } from './program';
 import { playerSpeedKph } from './speedTable';
-import type { CadenceSample, RideSummary, SimEvent, SimState } from './types';
+import type { CadenceSample, HeartRateSample, RideSummary, SimEvent, SimState } from './types';
+
+export interface RideSimOptions {
+  /** Qué entrada mueve al ciclista. Por defecto el pulso, la entrada real del proyecto. */
+  inputMode?: InputMode;
+  rider?: RiderProfile;
+}
 
 /**
  * El núcleo del juego: gap += (playerSpeed - zombieSpeed) * dt.
@@ -20,6 +27,8 @@ export class RideSim {
   private readonly totalSec: number;
   private readonly cfg: SimConfig;
   private readonly now: () => number;
+  private readonly inputMode: InputMode;
+  private readonly rider: RiderProfile;
 
   private elapsedSec = 0;
   private distanceM = 0;
@@ -31,6 +40,15 @@ export class RideSim {
   private sampleAgeSec = Number.POSITIVE_INFINITY;
   private staleNotified = false;
   private effectiveRpm = 0;
+
+  private latestBpm = 0;
+  private hrSampleAgeSec = Number.POSITIVE_INFINITY;
+  private hrStaleNotified = false;
+  /** Última lectura retenida; decae hacia el reposo si la pulsera calla. */
+  private heldBpm = 0;
+  private smoothedBpm = 0;
+  private effortFrac = 0;
+
   private lastPlayerKph = 0;
   private lastZombieKph = 0;
 
@@ -39,6 +57,7 @@ export class RideSim {
   private healthDepletedNotified = false;
 
   private cadenceRpmSec = 0; // ∫ rpm dt, para la cadencia media del resumen
+  private heartRateBpmSec = 0; // ∫ bpm dt, para el pulso medio del resumen
   private lastSegmentIndex = -1;
   private warnedSegmentIndex = -1;
   private ridePhase: 'riding' | 'finished' = 'riding';
@@ -47,11 +66,14 @@ export class RideSim {
     program: TrainingProgram,
     cfg: SimConfig = SIM,
     now: () => number = () => performance.now(),
+    opts: RideSimOptions = {},
   ) {
     this.segments = expandProgram(program);
     this.totalSec = totalDurationSec(this.segments);
     this.cfg = cfg;
     this.now = now;
+    this.inputMode = opts.inputMode ?? 'heartRate';
+    this.rider = opts.rider ?? RIDER;
     this.gapM = cfg.initialGapM;
     this.healthPct = cfg.maxHealth;
     this.resistanceLevel = cfg.startResistance;
@@ -62,6 +84,16 @@ export class RideSim {
     // Una muestra entregada tarde no cuenta como fresca.
     this.sampleAgeSec = Math.max(0, (this.now() - sample.timestampMs) / 1000);
     if (this.sampleAgeSec <= this.cfg.staleCadenceSec) this.staleNotified = false;
+  }
+
+  pushHeartRate(sample: HeartRateSample): void {
+    if (sample.bpm <= 0) return;
+    this.latestBpm = sample.bpm;
+    this.hrSampleAgeSec = Math.max(0, (this.now() - sample.timestampMs) / 1000);
+    if (this.hrSampleAgeSec <= this.cfg.staleHeartRateSec) {
+      this.heldBpm = sample.bpm;
+      this.hrStaleNotified = false;
+    }
   }
 
   setResistance(level: number): void {
@@ -76,20 +108,15 @@ export class RideSim {
     const dt = Math.min(Math.max(dtSec, 0), this.cfg.maxDtSec);
     if (dt <= 0) return events;
 
-    // La regla de staleness vive aquí, en el bucle — no en el callback BLE.
-    // Un sensor parado deja de notificar; sin esto la última cadencia queda
-    // congelada y la horda no alcanza a nadie nunca.
-    this.sampleAgeSec += dt;
-    const stale = this.sampleAgeSec > this.cfg.staleCadenceSec;
-    const rpm = stale ? 0 : this.latestRpm;
-    if (stale && this.latestRpm > 0 && !this.staleNotified) {
-      this.staleNotified = true;
-      events.push({ type: 'staleCadence' });
-    }
+    const rpm = this.updateCadence(dt, events);
+    const bpm = this.updateHeartRate(dt, events);
 
     this.caughtGraceSec = Math.max(0, this.caughtGraceSec - dt);
 
-    const pKph = playerSpeedKph(this.resistanceLevel, rpm, this.cfg.speed);
+    const pKph =
+      this.inputMode === 'heartRate'
+        ? playerSpeedFromEffort(this.effortFrac, this.cfg.effort)
+        : playerSpeedKph(this.resistanceLevel, rpm, this.cfg.speed);
     let zKph = zombieSpeedAt(this.segments, this.elapsedSec, this.cfg.zombieRampSec);
     if (this.caughtGraceSec > 0) zKph *= this.cfg.catch.stumbleSpeedFactor;
 
@@ -112,6 +139,7 @@ export class RideSim {
     this.distanceM += (pKph / 3.6) * dt;
     this.elapsedSec += dt;
     this.cadenceRpmSec += rpm * dt;
+    this.heartRateBpmSec += bpm * dt;
     this.effectiveRpm = rpm;
     this.lastPlayerKph = pKph;
     this.lastZombieKph = zKph;
@@ -145,6 +173,53 @@ export class RideSim {
     return events;
   }
 
+  /**
+   * La regla de staleness vive aquí, en el bucle — no en el callback BLE.
+   * Un sensor parado deja de notificar; sin esto la última cadencia queda
+   * congelada y la horda no alcanza a nadie nunca.
+   */
+  private updateCadence(dt: number, events: SimEvent[]): number {
+    this.sampleAgeSec += dt;
+    const stale = this.sampleAgeSec > this.cfg.staleCadenceSec;
+    const rpm = stale ? 0 : this.latestRpm;
+    if (stale && this.latestRpm > 0 && !this.staleNotified) {
+      this.staleNotified = true;
+      events.push({ type: 'staleCadence' });
+    }
+    return rpm;
+  }
+
+  /**
+   * El pulso no cae a cero cuando la pulsera calla: su silencio es un dropout
+   * (reconexión BLE), no un rider parado. La lectura retenida decae hacia el
+   * reposo, y el suavizado exponencial quita el jitter del sensor óptico.
+   */
+  private updateHeartRate(dt: number, events: SimEvent[]): number {
+    this.hrSampleAgeSec += dt;
+    const stale = this.hrSampleAgeSec > this.cfg.staleHeartRateSec;
+    if (stale) {
+      if (this.latestBpm > 0 && !this.hrStaleNotified) {
+        this.hrStaleNotified = true;
+        events.push({ type: 'staleHeartRate' });
+      }
+      this.heldBpm = Math.max(
+        this.rider.hrRestBpm,
+        this.heldBpm - this.cfg.heartRateDecayBpmPerSec * dt,
+      );
+    }
+    if (this.latestBpm <= 0) {
+      this.smoothedBpm = 0;
+    } else if (this.smoothedBpm <= 0) {
+      this.smoothedBpm = this.heldBpm; // primera lectura: sin arrancar desde cero
+    } else {
+      const tau = this.cfg.heartRateSmoothingSec;
+      const k = tau > 0 ? 1 - Math.exp(-dt / tau) : 1;
+      this.smoothedBpm += (this.heldBpm - this.smoothedBpm) * k;
+    }
+    this.effortFrac = effortFraction(this.smoothedBpm, this.rider);
+    return this.smoothedBpm;
+  }
+
   get state(): SimState {
     const idx = segmentIndexAt(this.segments, this.elapsedSec);
     const seg = this.segments[idx];
@@ -157,8 +232,12 @@ export class RideSim {
       distanceM: this.distanceM,
       gapM: this.gapM,
       healthPct: this.healthPct,
+      inputMode: this.inputMode,
       cadenceRpm: this.effectiveRpm,
       cadenceStale: this.sampleAgeSec > this.cfg.staleCadenceSec,
+      heartRateBpm: this.smoothedBpm,
+      heartRateStale: this.hrSampleAgeSec > this.cfg.staleHeartRateSec,
+      effortFrac: this.effortFrac,
       playerSpeedKph: this.lastPlayerKph,
       zombieSpeedKph: this.lastZombieKph,
       resistanceLevel: this.resistanceLevel,
@@ -180,11 +259,13 @@ export class RideSim {
   }
 
   private summary(): RideSummary {
+    const t = this.elapsedSec;
     return {
-      durationSec: this.elapsedSec,
+      durationSec: t,
       distanceM: this.distanceM,
       timesCaught: this.timesCaught,
-      avgCadenceRpm: this.elapsedSec > 0 ? this.cadenceRpmSec / this.elapsedSec : 0,
+      avgCadenceRpm: t > 0 ? this.cadenceRpmSec / t : 0,
+      avgHeartRateBpm: t > 0 ? this.heartRateBpmSec / t : 0,
     };
   }
 }

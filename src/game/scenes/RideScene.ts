@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
-import { RENDER } from '../../config';
+import { RENDER, RIDER, type InputMode, type RiderProfile } from '../../config';
 import type { CadenceSource } from '../../input/CadenceSource';
+import type { HeartRateSource } from '../../input/HeartRateSource';
 import type { TrainingProgram } from '../../sim/program';
 import { HIIT_30_30 } from '../../sim/programs/hiit-30-30';
 import { RideSim } from '../../sim/RideSim';
@@ -19,6 +20,13 @@ import { FONT_MONO, FONT_SANS, UI } from '../theme';
 import { releaseWakeLock } from '../wakeLock';
 
 /**
+ * En modo pulso no hay cadencia real que mover las bielas: se anima una
+ * cadencia plausible a partir de la velocidad (ancla de la tabla: 26 km/h
+ * a 80 rpm). Es puro decorado; el sim no lo sabe ni le importa.
+ */
+const VISUAL_RPM_PER_KPH = 80 / 26;
+
+/**
  * La escena del ride. Posee un RideSim nuevo por sesión, lo avanza una vez por
  * frame y dibuja TODO como función del estado del sim: el render nunca guarda
  * verdad propia sobre el juego.
@@ -31,7 +39,7 @@ export class RideScene extends Phaser.Scene {
   private effects!: Effects;
   private hud!: Hud;
   private banner!: CueBanner;
-  private resistanceCtl!: ResistanceControl;
+  private resistanceCtl: ResistanceControl | undefined;
   private vignette!: Phaser.GameObjects.Rectangle;
   private finishedShown = false;
 
@@ -42,7 +50,9 @@ export class RideScene extends Phaser.Scene {
   create(): void {
     const program =
       (this.registry.get('selectedProgram') as TrainingProgram | undefined) ?? HIIT_30_30;
-    this.sim = new RideSim(program);
+    const inputMode = (this.registry.get('inputMode') as InputMode | undefined) ?? 'heartRate';
+    const rider = (this.registry.get('riderProfile') as RiderProfile | undefined) ?? RIDER;
+    this.sim = new RideSim(program, undefined, undefined, { inputMode, rider });
 
     this.atmosphere = new Atmosphere(this);
 
@@ -55,7 +65,12 @@ export class RideScene extends Phaser.Scene {
 
     this.hud = new Hud(this);
     this.banner = new CueBanner(this, (finalPip) => gameAudio.playPip(finalPip));
-    this.resistanceCtl = new ResistanceControl(this, (delta) => this.adjustResistance(delta));
+    // La resistencia declarada solo mueve al ciclista en modo cadencia; en
+    // modo pulso el esfuerzo ya la absorbe y el control sobra.
+    this.resistanceCtl =
+      inputMode === 'cadence'
+        ? new ResistanceControl(this, (delta) => this.adjustResistance(delta))
+        : undefined;
 
     // Viñeta roja persistente cuando la salud llega a 0; el ride sigue igual.
     this.vignette = this.add
@@ -64,10 +79,14 @@ export class RideScene extends Phaser.Scene {
       .setDepth(20);
     this.finishedShown = false;
 
-    const source = this.registry.get('cadenceSource') as CadenceSource;
-    const unsubscribe = source.onSample((sample) => this.sim.pushCadence(sample));
+    // Las dos entradas se escuchan siempre; el sim decide cuál mueve al ciclista.
+    const cadence = this.registry.get('cadenceSource') as CadenceSource;
+    const heartRate = this.registry.get('heartRateSource') as HeartRateSource;
+    const unsubscribeCadence = cadence.onSample((sample) => this.sim.pushCadence(sample));
+    const unsubscribeHeartRate = heartRate.onSample((sample) => this.sim.pushHeartRate(sample));
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      unsubscribe();
+      unsubscribeCadence();
+      unsubscribeHeartRate();
       proximityAudio.stop();
     });
   }
@@ -95,7 +114,10 @@ export class RideScene extends Phaser.Scene {
       this.sim.state.segment.index === start &&
       guard++ < 20000
     ) {
-      this.sim.pushCadence({ rpm: this.sim.state.cadenceRpm, timestampMs: performance.now() });
+      const state = this.sim.state;
+      const timestampMs = performance.now();
+      this.sim.pushCadence({ rpm: state.cadenceRpm, timestampMs });
+      if (!state.heartRateStale) this.sim.pushHeartRate({ bpm: state.heartRateBpm, timestampMs });
       for (const event of this.sim.update(0.1)) this.handleEvent(event, true);
     }
   }
@@ -116,9 +138,12 @@ export class RideScene extends Phaser.Scene {
       case 'segmentChanged':
         if (event.segment.kind === 'surge') {
           this.banner.showNotice('¡¡OLEADA!!', 2500, UI.danger);
-        } else if (event.segment.cueResistance !== undefined) {
+        } else if (event.segment.cueResistance !== undefined && this.resistanceCtl) {
           this.banner.showNotice(`Resistencia → ${event.segment.cueResistance}`, 4000, UI.info);
         }
+        break;
+      case 'staleHeartRate':
+        if (!fastForward) this.banner.showNotice('Sin señal de la pulsera', 3000, UI.warn);
         break;
       case 'healthDepleted':
         this.vignette.setAlpha(0.16);
@@ -153,6 +178,10 @@ export class RideScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setDepth(31);
+    const effortLine =
+      this.sim.state.inputMode === 'heartRate'
+        ? `Pulso medio:     ${Math.round(summary.avgHeartRateBpm)} bpm`
+        : `Cadencia media:  ${Math.round(summary.avgCadenceRpm)} rpm`;
     this.add
       .text(
         cx,
@@ -161,7 +190,7 @@ export class RideScene extends Phaser.Scene {
           `Distancia:       ${(summary.distanceM / 1000).toFixed(2)} km`,
           `Tiempo:          ${formatMMSS(summary.durationSec)}`,
           `Veces alcanzado: ${summary.timesCaught}`,
-          `Cadencia media:  ${Math.round(summary.avgCadenceRpm)} rpm`,
+          effortLine,
         ].join('\n'),
         { fontFamily: FONT_MONO, fontSize: '30px', color: UI.textBright, lineSpacing: 14 },
       )
@@ -184,7 +213,9 @@ export class RideScene extends Phaser.Scene {
   private draw(state: SimState, dt: number): void {
     this.atmosphere.update(state.playerSpeedKph / 3.6, dt);
 
-    this.cyclist.update(dt, state.cadenceRpm, state.playerSpeedKph / 3.6);
+    const crankRpm =
+      state.inputMode === 'heartRate' ? state.playerSpeedKph * VISUAL_RPM_PER_KPH : state.cadenceRpm;
+    this.cyclist.update(dt, crankRpm, state.playerSpeedKph / 3.6);
     this.horde.update(dt, state.gapM, state.zombieSpeedKph / 3.6, state.caughtGraceSec > 0);
     this.effects.update(state.playerSpeedKph / 3.6);
     proximityAudio.update(state.gapM, dt);
@@ -196,6 +227,6 @@ export class RideScene extends Phaser.Scene {
 
     this.hud.update(state);
     this.banner.update(state);
-    this.resistanceCtl.update(state.resistanceLevel);
+    this.resistanceCtl?.update(state.resistanceLevel);
   }
 }

@@ -25,6 +25,36 @@ export const SPEED: SpeedTable = {
   ],
 };
 
+export interface EffortTable {
+  /** Fracción de reserva cardíaca (Karvonen: (pulso−reposo)/(máx−reposo)), ascendente. */
+  effortBreakpoints: readonly number[];
+  /** km/h para cada columna. */
+  kph: readonly number[];
+}
+
+// Modo pulso: el esfuerzo cardíaco mueve al ciclista. Calibrado para que cada
+// zona (Z1 50-60 %, Z2 60-70 %, Z3 70-80 %, Z4 80-90 %, Z5 90-100 %) rinda un
+// poco más que la horda del programa que la prescribe: recuperación 9-12 km/h,
+// fondo 16-19, umbral 24, oleadas 26-32. Se retunea pedaleando de verdad.
+export const EFFORT: EffortTable = {
+  effortBreakpoints: [0, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+  kph: [0, 4, 7, 11, 15, 20, 26, 32, 38],
+};
+
+export interface RiderProfile {
+  hrMaxBpm: number;
+  hrRestBpm: number;
+}
+
+/** Valores por defecto hasta que la pantalla de inicio permita ajustarlos. */
+export const RIDER: RiderProfile = {
+  hrMaxBpm: 190,
+  hrRestBpm: 60,
+};
+
+/** Qué entrada mueve al ciclista. El pulso es la entrada real del proyecto. */
+export type InputMode = 'heartRate' | 'cadence';
+
 export interface CatchConfig {
   healthCost: number;
   knockbackGapM: number;
@@ -38,6 +68,16 @@ export interface SimConfig {
   speed: SpeedTable;
   /** Sin muestra de cadencia en este tiempo → cadencia 0 (la regla vive en el bucle). */
   staleCadenceSec: number;
+  effort: EffortTable;
+  /**
+   * Sin muestra de pulso en este tiempo → la lectura caduca. A diferencia de
+   * la cadencia, el silencio de una pulsera es un dropout, no un rider parado:
+   * el pulso retenido decae hacia el reposo en vez de caer a cero.
+   */
+  staleHeartRateSec: number;
+  heartRateDecayBpmPerSec: number;
+  /** Constante de tiempo del suavizado del pulso (quita el jitter óptico). */
+  heartRateSmoothingSec: number;
   maxDtSec: number;
   initialGapM: number;
   /** Clamp del gap: prescripción sobre acumulación de ventaja. */
@@ -54,6 +94,10 @@ export interface SimConfig {
 export const SIM: SimConfig = {
   speed: SPEED,
   staleCadenceSec: 3,
+  effort: EFFORT,
+  staleHeartRateSec: 5,
+  heartRateDecayBpmPerSec: 2,
+  heartRateSmoothingSec: 2,
   maxDtSec: 0.25,
   initialGapM: 50,
   gapMaxM: 150,

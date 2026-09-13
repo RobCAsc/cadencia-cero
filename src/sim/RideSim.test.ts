@@ -18,6 +18,9 @@ const cfg = (over: Partial<SimConfig> = {}, catchOver: Partial<CatchConfig> = {}
   catch: { ...SIM.catch, ...catchOver },
 });
 
+/** Estos tests ejercitan la entrada original: la cadencia. */
+const CADENCE = { inputMode: 'cadence' } as const;
+
 const prog = (segments: TrainingProgram['segments']): TrainingProgram => ({
   id: 'test',
   name: 'test',
@@ -60,7 +63,7 @@ function coastFor(sim: RideSim, sec: number, step = 0.1): SimEvent[] {
 
 describe('RideSim: la integral del gap', () => {
   it('integra gap y distancia con velocidad constante', () => {
-    const sim = new RideSim(steady(1000, 14), cfg(), now);
+    const sim = new RideSim(steady(1000, 14), cfg(), now, CADENCE);
     pedalFor(sim, 10, 20); // 20 rpm → 20 km/h vs horda a 14
     expect(sim.state.gapM).toBeCloseTo(50 + ((20 - 14) / 3.6) * 10, 1);
     expect(sim.state.distanceM).toBeCloseTo((20 / 3.6) * 10, 1);
@@ -68,7 +71,7 @@ describe('RideSim: la integral del gap', () => {
   });
 
   it('clampa dt a maxDtSec y no avanza con dt <= 0', () => {
-    const sim = new RideSim(steady(1000, 14), cfg(), now);
+    const sim = new RideSim(steady(1000, 14), cfg(), now, CADENCE);
     sim.update(5);
     expect(sim.state.elapsedSec).toBe(SIM.maxDtSec);
     sim.update(0);
@@ -77,7 +80,7 @@ describe('RideSim: la integral del gap', () => {
   });
 
   it('clampa el gap a gapMaxM: la prescripción no se puede "bancar"', () => {
-    const sim = new RideSim(steady(1000, 14), cfg(), now);
+    const sim = new RideSim(steady(1000, 14), cfg(), now, CADENCE);
     pedalFor(sim, 60, 100); // 100 km/h sostenidos
     expect(sim.state.gapM).toBe(SIM.gapMaxM);
   });
@@ -85,7 +88,7 @@ describe('RideSim: la integral del gap', () => {
 
 describe('RideSim: regla de staleness (el detalle de correctitud del input)', () => {
   it('cerea la cadencia ~3 s después de la última muestra, con un solo evento', () => {
-    const sim = new RideSim(steady(1000, 5), cfg(), now);
+    const sim = new RideSim(steady(1000, 5), cfg(), now, CADENCE);
     pedalStep(sim, 90);
     expect(sim.state.cadenceRpm).toBe(90);
     expect(sim.state.cadenceStale).toBe(false);
@@ -105,7 +108,7 @@ describe('RideSim: regla de staleness (el detalle de correctitud del input)', ()
   });
 
   it('una muestra fresca revive la cadencia', () => {
-    const sim = new RideSim(steady(1000, 5), cfg(), now);
+    const sim = new RideSim(steady(1000, 5), cfg(), now, CADENCE);
     pedalStep(sim, 90);
     coastFor(sim, 4);
     expect(sim.state.cadenceRpm).toBe(0);
@@ -115,7 +118,7 @@ describe('RideSim: regla de staleness (el detalle de correctitud del input)', ()
   });
 
   it('una muestra con timestamp viejo NO cuenta como fresca', () => {
-    const sim = new RideSim(steady(1000, 5), cfg(), now);
+    const sim = new RideSim(steady(1000, 5), cfg(), now, CADENCE);
     clockMs = 60_000;
     sim.pushCadence({ rpm: 90, timestampMs: clockMs - 10_000 });
     sim.update(0.1);
@@ -127,7 +130,7 @@ describe('RideSim: regla de staleness (el detalle de correctitud del input)', ()
 describe('RideSim: ser atrapado es un revés, nunca el final', () => {
   it('al contacto: salud -20, knockback a 12 m, gracia de 5 s con horda al 60%', () => {
     // Horda a 36 km/h (10 m/s), rider parado, gap inicial 5 m → contacto en 0.5 s.
-    const sim = new RideSim(steady(1000, 36), cfg({ initialGapM: 5 }), now);
+    const sim = new RideSim(steady(1000, 36), cfg({ initialGapM: 5 }), now, CADENCE);
     const events = coastFor(sim, 0.5); // contacto exactamente en t = 0.5
     const caught = events.filter((e) => e.type === 'caught');
     expect(caught).toHaveLength(1);
@@ -149,7 +152,7 @@ describe('RideSim: ser atrapado es un revés, nunca el final', () => {
   });
 
   it('la penalización de distancia se descuenta del odómetro', () => {
-    const sim = new RideSim(steady(1000, 36), cfg({ initialGapM: 5 }), now);
+    const sim = new RideSim(steady(1000, 36), cfg({ initialGapM: 5 }), now, CADENCE);
     pedalFor(sim, 10, 80); // 80 km/h: abre gap y acumula distancia
     let before = sim.state.distanceM;
     expect(before).toBeGreaterThan(200);
@@ -167,7 +170,7 @@ describe('RideSim: ser atrapado es un revés, nunca el final', () => {
   });
 
   it('con salud 0 el ride sigue: healthDepleted una sola vez, catches siguen contando', () => {
-    const sim = new RideSim(steady(2000, 36), cfg({ initialGapM: 1 }), now);
+    const sim = new RideSim(steady(2000, 36), cfg({ initialGapM: 1 }), now, CADENCE);
     const events = coastFor(sim, 32); // catches ~cada 5 s desde t≈0.1
     const caught = events.filter((e) => e.type === 'caught');
     expect(caught.length).toBe(7);
@@ -190,6 +193,7 @@ describe('RideSim: segmentos y fin de sesión', () => {
       ]),
       cfg(),
       now,
+      CADENCE,
     );
     const first = pedalStep(sim, 30);
     expect(first.filter((e) => e.type === 'segmentChanged')).toMatchObject([{ index: 0 }]);
@@ -205,6 +209,7 @@ describe('RideSim: segmentos y fin de sesión', () => {
       ]),
       cfg({ zombieRampSec: 0 }),
       now,
+      CADENCE,
     );
     const events = pedalFor(sim, 11, 50);
     const warnings = events.filter((e) => e.type === 'surgeWarning');
@@ -224,6 +229,7 @@ describe('RideSim: segmentos y fin de sesión', () => {
       ]),
       cfg(),
       now,
+      CADENCE,
     );
     const events = pedalFor(sim, 5.2, 30);
     const finished = events.filter((e) => e.type === 'finished');
