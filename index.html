@@ -27,7 +27,8 @@
         z-index: 10;
         display: none;
         align-items: center;
-        gap: 12px;
+        flex-wrap: wrap;
+        gap: 8px 12px;
         padding: 8px 14px;
         background: rgba(8, 8, 16, 0.88);
         color: #cfd3dc;
@@ -48,6 +49,22 @@
       #dev-panel button {
         font: inherit;
         padding: 4px 10px;
+      }
+      #dev-panel .ble {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding-left: 12px;
+        border-left: 1px solid #2c3040;
+      }
+      #dev-panel .ble-status {
+        color: #8b93a5;
+      }
+      #dev-panel .ble-status.connected {
+        color: #7fd68a;
+      }
+      #dev-panel .ble-status.error {
+        color: #e07a7a;
       }
     </style>
   </head>

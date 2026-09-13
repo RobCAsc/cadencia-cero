@@ -7,6 +7,13 @@ export interface CadenceSample {
   timestampMs: number;
 }
 
+/** Una muestra de pulso, venga de la pulsera BLE o del slider falso. */
+export interface HeartRateSample {
+  bpm: number;
+  /** Dominio de performance.now(); una muestra vieja no cuenta como fresca. */
+  timestampMs: number;
+}
+
 export interface SegmentNextInfo {
   kind: SpeedSegmentKind;
   zombieSpeedKph: number;

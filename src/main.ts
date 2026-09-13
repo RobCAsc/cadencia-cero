@@ -4,10 +4,17 @@ import { DevPanel } from './dev/DevPanel';
 import { RideScene } from './game/scenes/RideScene';
 import { StartScene } from './game/scenes/StartScene';
 import { FakeCadenceSource } from './input/FakeCadenceSource';
+import { FakeHeartRateSource } from './input/FakeHeartRateSource';
 import { createCadenceSource } from './input/createCadenceSource';
+import { createHeartRateSource } from './input/createHeartRateSource';
 
 const source = createCadenceSource('fake');
 void source.start();
+
+// El pulso arranca en la fuente falsa; la pulsera real se enchufa con un
+// gesto del usuario (Web Bluetooth lo exige) y sustituye a esta en el registry.
+const heartRate = createHeartRateSource('fake');
+void heartRate.start();
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -23,12 +30,14 @@ const game = new Phaser.Game({
 });
 
 game.registry.set('cadenceSource', source);
+game.registry.set('heartRateSource', heartRate);
 
 if (
   (import.meta.env.DEV || location.search.includes('dev=1')) &&
-  source instanceof FakeCadenceSource
+  source instanceof FakeCadenceSource &&
+  heartRate instanceof FakeHeartRateSource
 ) {
-  new DevPanel(game, source);
+  new DevPanel(game, source, heartRate);
   // Referencia para depurar desde la consola del navegador.
   (window as unknown as { game?: Phaser.Game }).game = game;
 }

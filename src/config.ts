@@ -73,6 +73,9 @@ export const SIM: SimConfig = {
 export const FAKE = {
   sampleIntervalMs: 500,
   jitterRpm: 1.5,
+  /** Las bandas reales notifican a 1 Hz. */
+  heartRateIntervalMs: 1000,
+  jitterBpm: 1,
 } as const;
 
 export const RENDER = {
