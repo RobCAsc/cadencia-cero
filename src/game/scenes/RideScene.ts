@@ -6,7 +6,6 @@ import { toSessionRecord, type SessionRecord } from '../../sim/history';
 import { expandProgram, totalDurationSec, type TrainingProgram } from '../../sim/program';
 import { HIIT_30_30 } from '../../sim/programs/hiit-30-30';
 import { RideSim } from '../../sim/RideSim';
-import { activeSec } from '../../sim/zones';
 import {
   applyAdvice,
   calibrationAdvice,
@@ -19,15 +18,16 @@ import { saveRiderProfile } from '../../storage/riderStore';
 import { saveSession } from '../../storage/sessionStore';
 import { Cyclist } from '../actors/Cyclist';
 import { Horde } from '../actors/Horde';
+import { ambientAudio } from '../ambientAudio';
 import { gameAudio } from '../audio';
 import { Effects, ensureVignette } from '../effects';
 import { proximityAudio } from '../proximityAudio';
-import { formatMMSS } from '../format';
 import { CueBanner } from '../hud/CueBanner';
 import { Hud } from '../hud/Hud';
 import { ResistanceControl } from '../hud/ResistanceControl';
 import { Atmosphere } from '../atmosphere';
-import { FONT_MONO, FONT_SANS, UI } from '../theme';
+import { FinishPanel } from '../ride/FinishPanel';
+import { UI } from '../theme';
 import { releaseWakeLock } from '../wakeLock';
 
 /**
@@ -79,6 +79,7 @@ export class RideScene extends Phaser.Scene {
     ensureVignette(this);
     this.add.image(0, 0, 'fx-vignette').setOrigin(0, 0).setDepth(5);
     proximityAudio.start();
+    ambientAudio.start();
 
     this.hud = new Hud(this, { segments: expandProgram(program), onQuit: () => this.quitRide() });
     this.banner = new CueBanner(this, (finalPip) => gameAudio.playPip(finalPip));
@@ -105,6 +106,7 @@ export class RideScene extends Phaser.Scene {
       unsubscribeCadence();
       unsubscribeHeartRate();
       proximityAudio.stop();
+      ambientAudio.stop();
     });
   }
 
@@ -124,9 +126,9 @@ export class RideScene extends Phaser.Scene {
   private quitRide(): void {
     if (this.finishedShown) return;
     const summary = this.sim.summary();
-    this.recordSession(summary, false);
+    const record = this.recordSession(summary, false);
     proximityAudio.stop();
-    this.showFinished(summary, false);
+    this.showFinished(summary, record, false);
   }
 
   adjustResistance(delta: number): void {
@@ -187,11 +189,12 @@ export class RideScene extends Phaser.Scene {
       case 'healthDepleted':
         this.vignette.setAlpha(0.16);
         break;
-      case 'finished':
+      case 'finished': {
         proximityAudio.stop();
-        this.recordSession(event.summary, true);
-        this.showFinished(event.summary);
+        const record = this.recordSession(event.summary, true);
+        this.showFinished(event.summary, record, true);
         break;
+      }
       default:
         break; // staleCadence y surgeWarning se leen del estado en la HUD/banner
     }
@@ -202,7 +205,7 @@ export class RideScene extends Phaser.Scene {
    * inmediato, y a IndexedDB para la próxima vez. Un fallo de disco no toca
    * el ride.
    */
-  private recordSession(summary: RideSummary, completed: boolean): void {
+  private recordSession(summary: RideSummary, completed: boolean): SessionRecord {
     const stored = this.registry.get('riderProfileStored') as StoredRiderProfile | undefined;
     const record = toSessionRecord({
       startedAtMs: this.startedAtMs,
@@ -216,74 +219,27 @@ export class RideScene extends Phaser.Scene {
     const history = (this.registry.get('sessionHistory') as SessionRecord[] | undefined) ?? [];
     this.registry.set('sessionHistory', [...history.filter((r) => r.id !== record.id), record]);
     void saveSession(record);
+    return record;
   }
 
-  private showFinished(summary: RideSummary, completed = true): void {
+  private showFinished(summary: RideSummary, record: SessionRecord, completed: boolean): void {
     if (this.finishedShown) return;
     this.finishedShown = true;
     this.hud.hideQuit();
     releaseWakeLock(); // sesión terminada: la pantalla ya puede dormirse
     if (completed) gameAudio.playFinish();
 
-    const cx = RENDER.width / 2;
-    // El dim se traga los clics para que la HUD de abajo quede inerte.
-    this.add
-      .rectangle(cx, RENDER.height / 2, RENDER.width, RENDER.height, 0x05050a, 0.78)
-      .setDepth(30)
-      .setInteractive();
-    this.add
-      .text(cx, 170, completed ? '¡SOBREVIVISTE!' : 'SALIDA CORTADA', {
-        fontFamily: FONT_SANS,
-        fontSize: '64px',
-        fontStyle: 'bold',
-        color: completed ? UI.good : UI.warn,
-      })
-      .setOrigin(0.5)
-      .setDepth(31);
     const heartRateMode = this.sim.state.inputMode === 'heartRate';
-    const lines = [
-      `Distancia:       ${(summary.distanceM / 1000).toFixed(2)} km`,
-      `Tiempo:          ${formatMMSS(summary.durationSec)}`,
-      `Veces alcanzado: ${summary.timesCaught}`,
-    ];
-    if (heartRateMode) {
-      lines.push(`Pulso medio:     ${Math.round(summary.avgHeartRateBpm)} bpm`);
-      lines.push(`Pico sostenido:  ${Math.round(summary.peakHeartRateBpm)} bpm`);
-      lines.push(`Cardio (Z2+):    ${Math.round(activeSec(summary.zoneSec) / 60)} min`);
-    } else {
-      lines.push(`Cadencia media:  ${Math.round(summary.avgCadenceRpm)} rpm`);
-    }
-    this.add
-      .text(cx, 320, lines.join('\n'), {
-        fontFamily: FONT_MONO,
-        fontSize: '28px',
-        color: UI.textBright,
-        lineSpacing: 12,
-      })
-      .setOrigin(0.5)
-      .setDepth(31);
-
-    if (heartRateMode && completed) {
-      const note = this.applyCalibration(summary);
-      if (note) {
-        this.add
-          .text(cx, 448, note, { fontFamily: FONT_SANS, fontSize: '20px', color: UI.warn, align: 'center' })
-          .setOrigin(0.5)
-          .setDepth(31);
-      }
-    }
-
-    const button = this.add
-      .rectangle(cx, 560, 260, 76, UI.button)
-      .setDepth(31)
-      .setInteractive({ useHandCursor: true });
-    this.add
-      .text(cx, 560, 'Volver', { fontFamily: FONT_SANS, fontSize: '32px', color: UI.textBright })
-      .setOrigin(0.5)
-      .setDepth(32);
-    button.on('pointerover', () => button.setFillStyle(UI.buttonHover));
-    button.on('pointerout', () => button.setFillStyle(UI.button));
-    button.on('pointerdown', () => this.scene.start('StartScene'));
+    const calibrationNote = heartRateMode && completed ? this.applyCalibration(summary) : undefined;
+    new FinishPanel(this, {
+      summary,
+      record,
+      history: (this.registry.get('sessionHistory') as SessionRecord[] | undefined) ?? [],
+      completed,
+      heartRateMode,
+      calibrationNote,
+      onBack: () => this.scene.start('StartScene'),
+    });
   }
 
   /**
@@ -327,6 +283,7 @@ export class RideScene extends Phaser.Scene {
     this.horde.update(dt, state.gapM, state.zombieSpeedKph, state.caughtGraceSec > 0);
     this.effects.update(state.playerSpeedKph / 3.6, dt, night01);
     proximityAudio.update(state.gapM, dt);
+    ambientAudio.update(night01, Math.max(0, Math.min(1, (progress - 0.88) / 0.12)));
 
     // La cámara se acerca un pelín cuando los tienes encima y se balancea
     // con cada pedalada.
