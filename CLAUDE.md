@@ -35,7 +35,7 @@ The entire game is one integral:
 gap += (playerSpeed - zombieSpeed) * dt
 ```
 
-`gap` is the distance in metres between the rider and the pursuing horde. `zombieSpeed` is read from the active training program. `playerSpeed` is derived from cadence and the declared resistance level.
+`gap` is the distance in metres between the rider and the pursuing horde. `zombieSpeed` is read from the active training program. `playerSpeed` is derived from heart-rate effort (pulse mode, the default since 2026-09-13) or from cadence and the declared resistance level (cadence mode).
 
 Everything else — art, sound, terrain, HUD — is decoration on this. If the loop isn't tense with placeholder rectangles, it won't be tense with sprites.
 
@@ -86,13 +86,25 @@ Programs are JSON, loaded from static files, roughly:
 
 When a heart rate strap is connected, a segment may instead specify a target HR zone, and zombie speed becomes closed-loop: it accelerates while the rider is below zone and eases off above it. This auto-calibrates across fitness levels and resistance-knob positions, which is the honest answer to "support different training purposes and speeds" on a bike that cannot report effort.
 
+## Habit and progress
+
+The health goal is the habit, so the game measures the habit and nothing else. Everything is derived from the list of stored sessions (`src/sim/progress.ts`, pure and unit tested, fed by `src/storage/sessionStore.ts`):
+
+- **Weekly goal with two doors**: 3 rides a week *or* 150 minutes in zone 2 or above (the WHO moderate-activity guideline). Crossing either door completes the week. A ride counts once it lasts five minutes; a ride cut short is saved, never discarded.
+- **The streak counts weeks, not days**, and forgives one missed week between two completed ones. A daily streak punishes the beginner and breaks the habit it pretends to build.
+- **The Route**: every kilometre of every ride adds up to a single journey with named refuges as milestones. They are markers on the road, not a story.
+- **Personal records and health**: first ride without being caught, longest ride, best cardio minutes, and the resting heart-rate trend, which is the most honest indicator of improvement this hardware can give.
+- **Today's ride**: a recommendation by level and by what the week already holds. Beginners get short, slow rides ("Primera salida") before the rotation base → surges → recovery kicks in; two hard days are never chained.
+
+Deliberately excluded (decided 2026-09-13): cosmetic unlockables, XP, levels. The reward is the sunrise at the end of the ride and the numbers moving.
+
 ## Phasing
 
-**Phase 0 — playable, no hardware.** Full game loop, slider-driven cadence, placeholder art, one hardcoded program. Ends when the loop is provably fun or provably isn't. This gate exists specifically so no money or firmware time gets spent on a mechanic that doesn't work.
+**Phase 0 — playable, no hardware.** Done. Full game loop, slider-driven cadence, placeholder art, one hardcoded program. The fun gate passed on 2026-08-29.
 
-**Phase 1 — real input.** BLE CSC connection, reconnection handling, speed calibration against perceived effort.
+**Phase 1 — real input.** Re-scoped on 2026-09-13: the rider decided not to buy a cadence sensor. The real input is **heart rate**, from a Huawei Band 9 broadcasting the standard Heart Rate profile, and the effort fraction (Karvonen, heart-rate reserve) drives player speed through a hand-tuned effort → km/h table. BLE CSC cadence stays implemented behind the same input interface as a future option; the fake cadence source stays too. Still open: tuning the effort table against real rides.
 
-**Phase 2 — training system.** Program JSON, program picker, heart rate integration, closed-loop zombie speed, post-session summary.
+**Phase 2 — training system.** Done. Program catalogue with light adjustments, heart-rate integration, rider profile with rest and comfortable-pace tests plus self-correcting calibration, session history in IndexedDB, post-session summary, and the habit layer above. Deferred on purpose: closed-loop zombie speed (the effort table already closes the loop through the rider's pulse) and loading programs by fetch (the TypeScript catalogue has the same shape as the JSON).
 
 **Phase 3 — optional.** ESP32 reading the bike's own reed switch and re-broadcasting as standard CSC, removing the dependency on the purchased sensor. Firmware, not app work.
 
@@ -102,7 +114,7 @@ Do not build 3D. A 2.5D parallax side-scroller delivers the sensation at a fract
 
 Do not build a backend, accounts, or cloud sync in v1. Session history goes in IndexedDB. This is a single-user app for one tablet.
 
-Do not add procedural terrain, story, unlockables, or multiplayer before Phase 2 ships. They are all more appealing to build than the calibration work, which is exactly why they need to be held back.
+Do not add procedural terrain, story, cosmetic unlockables, or multiplayer. They are all more appealing to build than the calibration work, which is exactly why they need to be held back. Habit metrics (weekly goal, streak, the Route, records) are not unlockables: they are the point, and they shipped with Phase 2.
 
 Do not model physics until the lookup table demonstrably fails.
 
