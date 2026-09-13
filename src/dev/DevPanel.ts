@@ -110,6 +110,19 @@ export class DevPanel {
     );
 
     window.addEventListener('keydown', (e) => this.onKeyDown(e));
+
+    // El panel es fijo al pie: si el lienzo no cede sitio, tapa la franja
+    // inferior del juego (y con ella el botón de perfil). Se reserva su
+    // altura y se avisa al escalador de Phaser.
+    const app = document.getElementById('app');
+    if (app) {
+      const reserve = () => {
+        app.style.height = `calc(100% - ${root.offsetHeight}px)`;
+        this.game.scale.refresh();
+      };
+      reserve();
+      new ResizeObserver(reserve).observe(root);
+    }
   }
 
   private rideScene(): RideScene | undefined {
