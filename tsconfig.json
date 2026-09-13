@@ -11,7 +11,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "useDefineForClassFields": true,
-    "types": ["vite/client", "web-bluetooth"]
+    "types": ["vite/client", "web-bluetooth", "vite-plugin-pwa/client"]
   },
   "include": ["src"]
 }

@@ -11,6 +11,9 @@ import { createHeartRateSource } from './input/createHeartRateSource';
 import { toSimRider } from './sim/riderProfile';
 import { loadRiderProfile } from './storage/riderStore';
 import { loadSessions } from './storage/sessionStore';
+import { registerServiceWorker } from './pwa';
+
+registerServiceWorker();
 
 const source = createCadenceSource('fake');
 void source.start();
