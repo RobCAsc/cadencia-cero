@@ -33,6 +33,8 @@ export interface SessionRecord {
   aboveZoneSec?: number;
   /** Reposo del perfil ese día: su tendencia es el indicador de salud más honesto. */
   hrRestBpm: number;
+  /** Reposo medido en el ritual de un minuto antes de salir (si se hizo). */
+  preRideRestBpm?: number;
 }
 
 export interface SessionInput {
@@ -43,6 +45,7 @@ export interface SessionInput {
   completed: boolean;
   summary: RideSummary;
   hrRestBpm: number;
+  preRideRestBpm?: number;
 }
 
 export function toSessionRecord(input: SessionInput): SessionRecord {
@@ -66,6 +69,7 @@ export function toSessionRecord(input: SessionInput): SessionRecord {
     inZoneSec: s.inZoneSec,
     aboveZoneSec: s.aboveZoneSec,
     hrRestBpm: input.hrRestBpm,
+    ...(input.preRideRestBpm !== undefined ? { preRideRestBpm: input.preRideRestBpm } : {}),
   };
 }
 

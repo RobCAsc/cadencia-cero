@@ -371,3 +371,51 @@ export function recommendToday(sessions: readonly SessionRecord[], nowMs: number
   }
   return rec('rotacion', 'recuperacion', { mainMin: easyMin }, closing);
 }
+
+// ---- el ritual de salida: reposo del día y disposición ---------------------
+
+export type Readiness = 'unknown' | 'normal' | 'elevated';
+
+export interface ReadinessVerdict {
+  state: Readiness;
+  /** Mediana de las últimas lecturas de reposo antes de salir. */
+  baselineBpm: number | undefined;
+  /** Hoy menos la base (positivo = más alto de lo normal). */
+  deltaBpm: number | undefined;
+}
+
+/** Con menos lecturas no hay "normal" contra el que comparar. */
+export const READINESS_MIN_READINGS = 3;
+/** Un reposo esta cantidad por encima de lo normal es señal de fatiga o de que algo se incuba. */
+export const ELEVATED_REST_BPM = 8;
+const BASELINE_READINGS = 7;
+
+/** Lecturas de reposo del ritual (las que existan), de la más antigua a la más reciente. */
+export function preRideRestReadings(sessions: readonly SessionRecord[]): number[] {
+  return sessions
+    .map((s) => s.preRideRestBpm)
+    .filter((bpm): bpm is number => bpm !== undefined && bpm > 0);
+}
+
+function median(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+export function restBaseline(sessions: readonly SessionRecord[]): number | undefined {
+  const readings = preRideRestReadings(sessions).slice(-BASELINE_READINGS);
+  return readings.length >= READINESS_MIN_READINGS ? Math.round(median(readings)) : undefined;
+}
+
+/**
+ * ¿Cómo viene el cuerpo hoy? Compara el reposo medido antes de salir con la
+ * mediana de las últimas lecturas. Solo señala "elevado": una lectura baja no
+ * es licencia para apretar, y una alta sí es razón para aflojar.
+ */
+export function readiness(sessions: readonly SessionRecord[], todayBpm: number): ReadinessVerdict {
+  const baselineBpm = restBaseline(sessions);
+  if (baselineBpm === undefined || todayBpm <= 0) return { state: 'unknown', baselineBpm, deltaBpm: undefined };
+  const deltaBpm = Math.round(todayBpm - baselineBpm);
+  return { state: deltaBpm >= ELEVATED_REST_BPM ? 'elevated' : 'normal', baselineBpm, deltaBpm };
+}

@@ -102,6 +102,9 @@ export class FinishPanel {
       ['Alcanzado', `${s.timesCaught} ${s.timesCaught === 1 ? 'vez' : 'veces'}`],
     ];
     if (opts.heartRateMode) {
+      if (opts.record.preRideRestBpm !== undefined) {
+        rows.push(['Reposo de hoy', `${opts.record.preRideRestBpm} bpm`]);
+      }
       rows.push(['Pulso medio', `${Math.round(s.avgHeartRateBpm)} bpm`]);
       rows.push(['Pico sostenido', `${Math.round(s.peakHeartRateBpm)} bpm`]);
       rows.push(['Cardio (Z2+)', `${Math.round(activeSec(s.zoneSec) / 60)} min`]);

@@ -3,9 +3,12 @@ import type { SessionRecord } from './history';
 import {
   brokenRecords,
   personalRecords,
+  preRideRestReadings,
+  readiness,
   recentWeeks,
   recommendToday,
   REFUGES,
+  restBaseline,
   routeProgress,
   streakWeeks,
   streakWeeksBefore,
@@ -253,5 +256,31 @@ describe('recommendToday: el plan por fases', () => {
     expect(recommendToday(hardYesterday, NOW).programId).toBe('fondo');
     const today = [...twelve, ride(0)];
     expect(recommendToday(today, NOW)).toMatchObject({ programId: 'recuperacion', values: { mainMin: 10 } });
+  });
+});
+
+describe('readiness: el reposo del ritual contra lo normal', () => {
+  const withRest = (daysAgo: number, bpm: number) => ride(daysAgo, { preRideRestBpm: bpm });
+
+  it('sin tres lecturas no hay normal', () => {
+    expect(readiness([], 70).state).toBe('unknown');
+    expect(readiness([withRest(4, 64), withRest(2, 66)], 80).state).toBe('unknown');
+    expect(restBaseline([withRest(4, 64), withRest(2, 66)])).toBeUndefined();
+  });
+
+  it('la base es la mediana de las últimas siete lecturas', () => {
+    const many = [90, 64, 66, 65, 70, 63, 66, 64, 65].map((bpm, i) => withRest(20 - i * 2, bpm));
+    expect(restBaseline(many)).toBe(65); // el 90 antiguo queda fuera de las últimas siete
+  });
+
+  it('ocho latidos por encima es "elevado"; menos, normal', () => {
+    const base = [withRest(6, 64), withRest(4, 66), withRest(2, 65)];
+    expect(readiness(base, 73)).toEqual({ state: 'elevated', baselineBpm: 65, deltaBpm: 8 });
+    expect(readiness(base, 71)).toEqual({ state: 'normal', baselineBpm: 65, deltaBpm: 6 });
+    expect(readiness(base, 58).state).toBe('normal');
+  });
+
+  it('las salidas sin lectura no cuentan para la base', () => {
+    expect(preRideRestReadings([ride(3), withRest(2, 60), ride(1)])).toEqual([60]);
   });
 });

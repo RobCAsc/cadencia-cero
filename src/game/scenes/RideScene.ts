@@ -4,6 +4,7 @@ import type { CadenceSource } from '../../input/CadenceSource';
 import type { HeartRateSource } from '../../input/HeartRateSource';
 import { toSessionRecord, type SessionRecord } from '../../sim/history';
 import { expandProgram, totalDurationSec, type TrainingProgram } from '../../sim/program';
+import { applyAdjustments, PROGRAM_CATALOG } from '../../sim/programs/catalog';
 import { OLEADAS } from '../../sim/programs/oleadas';
 import { RideSim } from '../../sim/RideSim';
 import {
@@ -26,6 +27,7 @@ import { CueBanner } from '../hud/CueBanner';
 import { Hud } from '../hud/Hud';
 import { ResistanceControl } from '../hud/ResistanceControl';
 import { Atmosphere } from '../atmosphere';
+import { CalmPanel } from '../ride/CalmPanel';
 import { FinishPanel } from '../ride/FinishPanel';
 import { UI } from '../theme';
 import { releaseWakeLock } from '../wakeLock';
@@ -38,6 +40,13 @@ import { releaseWakeLock } from '../wakeLock';
 const VISUAL_RPM_PER_KPH = 80 / 26;
 
 const sign = (pct: number): string => `${pct > 0 ? '+' : ''}${pct} %`;
+
+/** Datos con los que se puede (re)arrancar la escena. */
+interface RideSceneData {
+  /** Sin el minuto de calma (ya se hizo antes de cambiar de programa). */
+  skipCalm?: boolean;
+  preRideRestBpm?: number;
+}
 
 /**
  * La escena del ride. Posee un RideSim nuevo por sesión, lo avanza una vez por
@@ -57,12 +66,14 @@ export class RideScene extends Phaser.Scene {
   private finishedShown = false;
   private program!: TrainingProgram;
   private startedAtMs = 0;
+  private calm: CalmPanel | undefined;
+  private preRideRestBpm: number | undefined;
 
   constructor() {
     super('RideScene');
   }
 
-  create(): void {
+  create(data?: RideSceneData): void {
     const program =
       (this.registry.get('selectedProgram') as TrainingProgram | undefined) ?? OLEADAS;
     const inputMode = (this.registry.get('inputMode') as InputMode | undefined) ?? 'heartRate';
@@ -70,6 +81,8 @@ export class RideScene extends Phaser.Scene {
     this.sim = new RideSim(program, undefined, undefined, { inputMode, rider });
     this.program = program;
     this.startedAtMs = Date.now();
+    this.preRideRestBpm = data?.preRideRestBpm;
+    this.calm = undefined;
 
     this.atmosphere = new Atmosphere(this);
 
@@ -105,17 +118,55 @@ export class RideScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       unsubscribeCadence();
       unsubscribeHeartRate();
+      this.calm?.destroy();
       proximityAudio.stop();
       ambientAudio.stop();
     });
+
+    // El ritual: un minuto de calma antes de salir. Solo en modo pulso, y
+    // solo una vez (al cambiar a suave la escena se reinicia sin él).
+    if (inputMode === 'heartRate' && !data?.skipCalm) {
+      this.calm = new CalmPanel(this, {
+        source: heartRate,
+        history: (this.registry.get('sessionHistory') as SessionRecord[] | undefined) ?? [],
+        onStart: (restBpm) => this.beginRide(restBpm),
+        onEasier: (restBpm) => this.switchToEasier(restBpm),
+      });
+    }
   }
 
   update(_time: number, deltaMs: number): void {
     const dt = deltaMs / 1000;
+    if (this.calm) {
+      // Durante el minuto de calma el sim no corre: la horda espera lejos.
+      this.calm.update();
+      this.draw(this.sim.state, dt);
+      return;
+    }
     // Tras terminar (o cortar) la salida el sim ya no avanza; el mundo sigue
     // respirando bajo el resumen.
     if (!this.finishedShown) for (const event of this.sim.update(dt)) this.handleEvent(event, false);
     this.draw(this.sim.state, dt);
+  }
+
+  private beginRide(restBpm: number | undefined): void {
+    this.calm = undefined;
+    this.preRideRestBpm = restBpm;
+    this.startedAtMs = Date.now(); // el minuto de calma no es tiempo de salida
+  }
+
+  /** El reposo vino alto: hoy toca suave. Se reinicia la escena con recuperación corta. */
+  private switchToEasier(restBpm: number): void {
+    this.calm = undefined;
+    const entry = PROGRAM_CATALOG.find((e) => e.program.id === 'recuperacion');
+    if (entry) {
+      this.registry.set(
+        'selectedProgram',
+        applyAdjustments(entry.program, entry.adjustments, { warmupMin: 3, mainMin: 12 }),
+      );
+    }
+    const data: RideSceneData = { skipCalm: true, preRideRestBpm: restBpm };
+    this.scene.restart(data);
   }
 
   /**
@@ -215,6 +266,7 @@ export class RideScene extends Phaser.Scene {
       completed,
       summary,
       hrRestBpm: stored?.hrRestBpm ?? RIDER.hrRestBpm,
+      preRideRestBpm: this.preRideRestBpm,
     });
     const history = (this.registry.get('sessionHistory') as SessionRecord[] | undefined) ?? [];
     this.registry.set('sessionHistory', [...history.filter((r) => r.id !== record.id), record]);
