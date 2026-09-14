@@ -109,6 +109,8 @@ export class RideScene extends Phaser.Scene {
       .setAlpha(0)
       .setDepth(20);
     this.finishedShown = false;
+    // Entrada en fundido: la noche aparece, no se enciende.
+    this.cameras.main.fadeIn(900, 5, 6, 14);
 
     // Las dos entradas se escuchan siempre; el sim decide cuál mueve al ciclista.
     const cadence = this.registry.get('cadenceSource') as CadenceSource;
@@ -331,9 +333,13 @@ export class RideScene extends Phaser.Scene {
 
     const crankRpm =
       state.inputMode === 'heartRate' ? state.playerSpeedKph * VISUAL_RPM_PER_KPH : state.cadenceRpm;
-    this.cyclist.update(dt, crankRpm, state.playerSpeedKph / 3.6);
+    const closeness = Math.max(0, Math.min(1, 1 - state.gapM / 40));
+    const danger01 = Math.max(0, Math.min(1, 1 - state.gapM / 15));
+    this.atmosphere.setDread(closeness);
+    this.cyclist.update(dt, crankRpm, state.playerSpeedKph / 3.6, state.effortFrac);
     this.horde.update(dt, state.gapM, state.zombieSpeedKph, state.caughtGraceSec > 0);
-    this.effects.update(state.playerSpeedKph / 3.6, dt, night01);
+    this.effects.update(state.playerSpeedKph / 3.6, dt, night01, danger01);
+    this.effects.updateHorde(this.horde.screenX, this.horde.run01);
     proximityAudio.update(state.gapM, dt);
     ambientAudio.update(night01, Math.max(0, Math.min(1, (progress - 0.88) / 0.12)));
 

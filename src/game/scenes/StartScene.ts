@@ -12,6 +12,7 @@ import type { StoredRiderProfile } from '../../sim/riderProfile';
 import { Atmosphere } from '../atmosphere';
 import { gameAudio } from '../audio';
 import { formatMMSS } from '../format';
+import { Campfire } from '../start/Campfire';
 import { ProfilePanel } from '../start/ProfilePanel';
 import { ProfilePreview } from '../start/ProfilePreview';
 import { ProgressPanel } from '../start/ProgressPanel';
@@ -72,6 +73,7 @@ export class StartScene extends Phaser.Scene {
   private recommendation!: Recommendation;
   private stored!: StoredConfig;
   private atmosphere!: Atmosphere;
+  private campfire!: Campfire;
   private progress!: ProgressPanel;
   private preview!: ProfilePreview;
   private cardHeading!: Phaser.GameObjects.Text;
@@ -94,6 +96,8 @@ export class StartScene extends Phaser.Scene {
     // La noche de fondo, atenuada para que la UI respire.
     this.atmosphere = new Atmosphere(this, false);
     this.add.rectangle(0, 0, 1280, 720, 0x05060e, 0.74).setOrigin(0, 0);
+    this.campfire = new Campfire(this);
+    this.cameras.main.fadeIn(700, 5, 6, 14);
 
     const stored = this.registry.get('trainingConfig') as StoredConfig | undefined;
     this.stored = stored ?? { programId: 'primera-salida', values: {} };
@@ -155,6 +159,7 @@ export class StartScene extends Phaser.Scene {
 
   update(_time: number, deltaMs: number): void {
     this.atmosphere.update(0, deltaMs / 1000); // la niebla deriva sola
+    this.campfire.update(deltaMs / 1000);
   }
 
   private history(): SessionRecord[] {

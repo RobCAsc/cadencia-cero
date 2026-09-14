@@ -7,8 +7,10 @@ import { lcg } from './rng';
 // es el amanecer. Terminar la sesión es ver salir el sol. Todo dibujado por
 // código: las siluetas se generan en blanco una vez y se tintan por fase; el
 // cielo se redibuja (barato) cuando cambia; luna y sol son texturas que se
-// mueven. El scroll es proporcional a la velocidad del jugador y la niebla
-// deriva sola con el "viento".
+// mueven. Encima, la vida del lugar: estrellas que titilan y alguna fugaz,
+// farolas rotas que parpadean al pasar, niebla que se espesa cuando la horda
+// se acerca, y al amanecer rayos de sol y pájaros. El scroll es proporcional
+// a la velocidad del jugador y la niebla deriva sola con el "viento".
 
 const HORIZON_Y = 600;
 
@@ -42,6 +44,16 @@ const ROAD_DASH = 0x343b60;
 const ROAD_CRACK = 0x04050b;
 const WHITE = 0xffffff;
 const LIGHTNING = 0xdde4ff;
+const LAMP_LIGHT = 0xffd9a0;
+
+/** Farolas al borde de la carretera: cada cuántos px se repite el patrón y dónde cae cada una. */
+const LAMP_PERIOD_PX = 2600;
+const LAMPS: ReadonlyArray<{ offset: number; kind: 'dead' | 'flicker' | 'steady' }> = [
+  { offset: 300, kind: 'flicker' },
+  { offset: 1150, kind: 'dead' },
+  { offset: 1900, kind: 'steady' },
+];
+const TWINKLE_COUNT = 16;
 
 export function lerpColor(a: number, b: number, t: number): number {
   const k = Math.max(0, Math.min(1, t));
@@ -101,6 +113,13 @@ function makeStarsTexture(scene: Phaser.Scene): void {
     g.fillRect(x, y, rnd() < 0.2 ? 2 : 1, rnd() < 0.2 ? 2 : 1);
   }
   g.generateTexture('atm-stars', RENDER.width, 440);
+  g.clear();
+  // Una estrella que titila: punto con halo.
+  g.fillStyle(0xdde6ff, 0.35);
+  g.fillCircle(4, 4, 4);
+  g.fillStyle(0xffffff, 1);
+  g.fillCircle(4, 4, 1.6);
+  g.generateTexture('atm-twinkle', 8, 8);
   g.destroy();
 }
 
@@ -113,6 +132,13 @@ function makeCloudsTexture(scene: Phaser.Scene): void {
   g.fillEllipse(1050, 240, 300, 10);
   g.fillEllipse(600, 260, 260, 9);
   g.generateTexture('atm-clouds', RENDER.width, 300);
+  g.clear();
+  // Un segundo banco de nubes, más alto y más tenue, para que el cielo tenga fondo.
+  g.fillStyle(WHITE, 0.04);
+  g.fillEllipse(200, 60, 420, 12);
+  g.fillEllipse(700, 40, 520, 10);
+  g.fillEllipse(1100, 90, 360, 9);
+  g.generateTexture('atm-clouds2', RENDER.width, 140);
   g.destroy();
 }
 
@@ -143,6 +169,32 @@ function makeSunTexture(scene: Phaser.Scene): void {
   g.fillStyle(0xfff0c0, 1);
   g.fillCircle(c, c, 44);
   g.generateTexture('atm-sun', c * 2, c * 2);
+  g.destroy();
+}
+
+function makeLampTextures(scene: Phaser.Scene): void {
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  // Poste con brazo y cabeza, en blanco para tintarlo como el plano cercano.
+  g.fillStyle(WHITE, 1);
+  g.fillRect(4, 12, 5, 150);
+  g.fillRect(4, 8, 24, 5);
+  g.fillRect(20, 2, 12, 9);
+  g.fillRect(0, 158, 13, 4);
+  g.generateTexture('atm-lamp', 32, 162);
+  g.clear();
+  // Cono de luz hacia abajo, cálido y suave.
+  for (let i = 10; i >= 1; i--) {
+    g.fillStyle(LAMP_LIGHT, 0.03);
+    g.fillTriangle(70, 0, 70 - i * 8, 170, 70 + i * 8, 170);
+  }
+  g.generateTexture('atm-lampcone', 140, 170);
+  g.clear();
+  // Charco de luz en el asfalto.
+  for (let i = 7; i >= 1; i--) {
+    g.fillStyle(LAMP_LIGHT, 0.045);
+    g.fillEllipse(110, 24, 30 + i * 24, 8 + i * 5);
+  }
+  g.generateTexture('atm-lamppool', 220, 48);
   g.destroy();
 }
 
@@ -368,6 +420,10 @@ function makeRoadTexture(scene: Phaser.Scene): void {
     g.fillStyle(0x23284a, 0.6);
     g.fillRect(rnd() * 512, 12 + rnd() * 108, 2, 2);
   }
+  // Charcos: reflejan un poco de cielo.
+  g.fillStyle(0x3a4468, 0.35);
+  g.fillEllipse(96, 104, 54, 9);
+  g.fillEllipse(330, 118, 40, 7);
 
   g.generateTexture('atm-road', 512, H);
   g.destroy();
@@ -397,6 +453,7 @@ function ensureTextures(scene: Phaser.Scene): void {
   makeCloudsTexture(scene);
   makeMoonTexture(scene);
   makeSunTexture(scene);
+  makeLampTextures(scene);
   makeFarTexture(scene);
   makeMidTexture(scene);
   makeNearTexture(scene);
@@ -404,12 +461,43 @@ function ensureTextures(scene: Phaser.Scene): void {
   makeFogTexture(scene);
 }
 
+interface Lamp {
+  offset: number;
+  kind: 'dead' | 'flicker' | 'steady';
+  post: Phaser.GameObjects.Image;
+  cone: Phaser.GameObjects.Image;
+  pool: Phaser.GameObjects.Image;
+  /** Estado del parpadeo: cuánto queda en el estado actual (s) y si está encendida. */
+  flickerLeft: number;
+  lit: boolean;
+}
+
+interface Bird {
+  x: number;
+  y: number;
+  speed: number;
+  phase: number;
+  size: number;
+}
+
+interface ShootingStar {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+}
+
 export class Atmosphere {
   private readonly sky: Phaser.GameObjects.Graphics;
   private readonly stars: Phaser.GameObjects.Image;
+  private readonly twinkles: Phaser.GameObjects.Image[] = [];
   private readonly clouds: Phaser.GameObjects.TileSprite;
+  private readonly clouds2: Phaser.GameObjects.TileSprite;
   private readonly moon: Phaser.GameObjects.Image;
   private readonly sun: Phaser.GameObjects.Image;
+  private readonly rays: Phaser.GameObjects.Graphics;
+  private readonly skyFx: Phaser.GameObjects.Graphics;
   private readonly far: Phaser.GameObjects.TileSprite;
   private readonly mid: Phaser.GameObjects.TileSprite;
   private readonly near: Phaser.GameObjects.TileSprite;
@@ -417,10 +505,20 @@ export class Atmosphere {
   private readonly fogBack: Phaser.GameObjects.TileSprite;
   private readonly fogMid: Phaser.GameObjects.TileSprite;
   private readonly fogFront: Phaser.GameObjects.TileSprite;
+  private readonly lamps: Lamp[] = [];
+  private readonly frontFogBase: number;
 
   private progress = 0.3;
   private drawnProgress = -1;
+  private phase: Phase = phaseAt(0.3);
   private flash = 0;
+  private dread = 0;
+  private roadScroll = 0;
+  private tAlive = 0;
+  private birds: Bird[] = [];
+  private nextFlockSec = 3;
+  private shooting: ShootingStar | undefined;
+  private readonly rnd = lcg(8675309);
 
   constructor(scene: Phaser.Scene, withFrontFog = true) {
     ensureTextures(scene);
@@ -428,9 +526,22 @@ export class Atmosphere {
 
     this.sky = scene.add.graphics({ x: 0, y: 0 });
     this.stars = scene.add.image(0, 0, 'atm-stars').setOrigin(0, 0);
+    const trnd = lcg(2718);
+    for (let i = 0; i < TWINKLE_COUNT; i++) {
+      const star = scene.add
+        .image(trnd() * w, trnd() * trnd() * 380, 'atm-twinkle')
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setScale(0.7 + trnd() * 0.8)
+        .setData('phase', trnd() * Math.PI * 2)
+        .setData('rate', 0.6 + trnd() * 1.6);
+      this.twinkles.push(star);
+    }
+    this.clouds2 = scene.add.tileSprite(0, 20, w, 140, 'atm-clouds2').setOrigin(0, 0);
     this.clouds = scene.add.tileSprite(0, 0, w, 300, 'atm-clouds').setOrigin(0, 0);
     this.moon = scene.add.image(330, 175, 'atm-moon');
     this.sun = scene.add.image(1000, 640, 'atm-sun').setBlendMode(Phaser.BlendModes.ADD);
+    this.rays = scene.add.graphics({ x: 0, y: 0 }).setBlendMode(Phaser.BlendModes.ADD);
+    this.skyFx = scene.add.graphics({ x: 0, y: 0 });
     this.far = scene.add.tileSprite(0, HORIZON_Y - 260, w, 260, 'atm-far').setOrigin(0, 0);
     // La niebla abraza el horizonte, sin lavar las siluetas cercanas.
     this.fogBack = scene.add
@@ -445,11 +556,27 @@ export class Atmosphere {
     this.near = scene.add.tileSprite(0, HORIZON_Y - 100, w, 100, 'atm-near').setOrigin(0, 0);
     this.road = scene.add.tileSprite(0, HORIZON_Y - 10, w, 130, 'atm-road').setOrigin(0, 0);
 
+    // Farolas al borde del asfalto: pasan con la carretera, por detrás de los actores.
+    for (const spec of LAMPS) {
+      const post = scene.add.image(0, HORIZON_Y + 6, 'atm-lamp').setOrigin(0.15, 1).setDepth(1);
+      const cone = scene.add
+        .image(0, HORIZON_Y - 150, 'atm-lampcone')
+        .setOrigin(0.5, 0)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDepth(1);
+      const pool = scene.add
+        .image(0, HORIZON_Y + 16, 'atm-lamppool')
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDepth(1);
+      this.lamps.push({ ...spec, post, cone, pool, flickerLeft: 0, lit: spec.kind !== 'dead' });
+    }
+
     // Niebla frontal, por delante de los actores (depth > actores, < HUD).
+    this.frontFogBase = withFrontFog ? 0.18 : 0;
     this.fogFront = scene.add
       .tileSprite(0, HORIZON_Y - 30, w, 160, 'atm-fog')
       .setOrigin(0, 0)
-      .setAlpha(withFrontFog ? 0.18 : 0)
+      .setAlpha(this.frontFogBase)
       .setDepth(4);
 
     this.applyPhase(true);
@@ -460,34 +587,51 @@ export class Atmosphere {
     this.progress = Math.max(0, Math.min(1, t01));
   }
 
+  /** 0 lejos … 1 con la horda encima: la niebla se espesa. */
+  setDread(d01: number): void {
+    this.dread = Math.max(0, Math.min(1, d01));
+  }
+
   /** Un relámpago: el cielo y las siluetas se blanquean un instante. */
   lightning(): void {
     this.flash = 1;
   }
 
   update(playerSpeedMps: number, dtSec: number): void {
+    this.tAlive += dtSec;
     const px = playerSpeedMps * RENDER.groundPxPerMeter * dtSec;
+    this.roadScroll += px;
     this.road.tilePositionX += px;
     this.near.tilePositionX += px * RENDER.nearFactor;
     this.mid.tilePositionX += px * 0.38;
     this.far.tilePositionX += px * 0.12;
     this.clouds.tilePositionX += px * 0.02 + 1.2 * dtSec;
-    // La niebla scrollea poco con el mundo y deriva sola con el viento.
+    this.clouds2.tilePositionX += px * 0.01 + 0.5 * dtSec;
+    // La niebla scrollea poco con el mundo y deriva sola con el viento; con
+    // la horda encima se espesa.
     this.fogBack.tilePositionX += px * 0.1 + 2.5 * dtSec;
     this.fogMid.tilePositionX += px * 0.35 + 5 * dtSec;
     this.fogFront.tilePositionX += px * 0.8 + 9 * dtSec;
+    const fogTarget = this.frontFogBase + this.dread * 0.3;
+    this.fogFront.alpha += (fogTarget - this.fogFront.alpha) * Math.min(1, dtSec * 1.5);
+    this.fogMid.setAlpha(0.3 + this.dread * 0.2);
 
-    // El cielo se redibuja solo cuando la fase cambió lo bastante (cada pocos
-    // segundos de sesión) o mientras dura un relámpago.
+    // El cielo se redibuja solo cuando la fase cambió lo bastante o mientras
+    // dura un relámpago.
     const flashing = this.flash > 0.005;
     if (flashing) this.flash *= Math.exp(-7 * dtSec);
     this.applyPhase(flashing);
+
+    this.updateTwinkles();
+    this.updateLamps(dtSec);
+    this.updateSkyLife(dtSec);
   }
 
   private applyPhase(force: boolean): void {
     if (!force && Math.abs(this.progress - this.drawnProgress) < 0.002) return;
     this.drawnProgress = this.progress;
     const p = phaseAt(this.progress);
+    this.phase = p;
     const f = Math.min(1, this.flash) * 0.75;
 
     const g = this.sky;
@@ -499,6 +643,7 @@ export class Atmosphere {
 
     this.stars.setAlpha(p.stars * (1 - f));
     this.clouds.setTint(p.fog);
+    this.clouds2.setTint(p.fog);
 
     // La luna cruza el cielo en arco por la izquierda y se pone tras las ruinas.
     const theta = Math.PI * Math.min(1, this.progress / 0.9);
@@ -514,5 +659,128 @@ export class Atmosphere {
     this.mid.setTint(lerpColor(p.mid, LIGHTNING, f * 0.5));
     this.near.setTint(lerpColor(p.near, LIGHTNING, f * 0.4));
     for (const fog of [this.fogBack, this.fogMid, this.fogFront]) fog.setTint(p.fog);
+    for (const lamp of this.lamps) lamp.post.setTint(lerpColor(p.near, LIGHTNING, f * 0.4));
+  }
+
+  // ---- estrellas -------------------------------------------------------------
+
+  private updateTwinkles(): void {
+    const base = this.phase.stars;
+    for (const star of this.twinkles) {
+      const phase = star.getData('phase') as number;
+      const rate = star.getData('rate') as number;
+      const tw = 0.35 + 0.65 * Math.abs(Math.sin(this.tAlive * rate + phase));
+      star.setAlpha(base * tw);
+    }
+  }
+
+  // ---- farolas ---------------------------------------------------------------
+
+  private updateLamps(dtSec: number): void {
+    // Encendidas de noche; con el sol fuera se apagan.
+    const night = 1 - this.phase.sun;
+    for (const lamp of this.lamps) {
+      const raw = ((lamp.offset - this.roadScroll) % LAMP_PERIOD_PX + LAMP_PERIOD_PX) % LAMP_PERIOD_PX;
+      const x = raw - 200;
+      const visible = x > -60 && x < RENDER.width + 60;
+      lamp.post.setVisible(visible).setX(x);
+      lamp.cone.setVisible(visible).setX(x + 20);
+      lamp.pool.setVisible(visible).setX(x + 20);
+      if (!visible) continue;
+
+      if (lamp.kind === 'flicker') {
+        lamp.flickerLeft -= dtSec;
+        if (lamp.flickerLeft <= 0) {
+          // Encendida ratos largos, apagones cortos y nerviosos.
+          lamp.lit = !lamp.lit;
+          lamp.flickerLeft = lamp.lit ? 0.4 + this.rnd() * 2.2 : 0.05 + this.rnd() * 0.25;
+        }
+      }
+      const on = lamp.kind === 'dead' ? 0 : lamp.lit ? 1 : 0;
+      const buzz = lamp.kind === 'steady' ? 0.92 + Math.sin(this.tAlive * 53) * 0.04 : 1;
+      const a = on * night * buzz;
+      lamp.cone.setAlpha(a);
+      lamp.pool.setAlpha(a * 0.9);
+    }
+  }
+
+  // ---- vida del cielo: fugaces, rayos, pájaros ---------------------------------
+
+  private updateSkyLife(dtSec: number): void {
+    const p = this.phase;
+    const fx = this.skyFx;
+    fx.clear();
+
+    // Estrella fugaz: rara, solo en noche cerrada.
+    if (!this.shooting && p.stars > 0.8 && this.rnd() < dtSec / 45) {
+      this.shooting = {
+        x: 200 + this.rnd() * 800,
+        y: 30 + this.rnd() * 160,
+        vx: 700 + this.rnd() * 500,
+        vy: 180 + this.rnd() * 160,
+        life: 0.7,
+      };
+    }
+    if (this.shooting) {
+      const s = this.shooting;
+      s.x += s.vx * dtSec;
+      s.y += s.vy * dtSec;
+      s.life -= dtSec;
+      const a = Math.max(0, Math.min(1, s.life / 0.7));
+      fx.lineStyle(2, 0xffffff, a * 0.9);
+      fx.lineBetween(s.x, s.y, s.x - s.vx * 0.1, s.y - s.vy * 0.1);
+      fx.lineStyle(1, 0xdde6ff, a * 0.4);
+      fx.lineBetween(s.x - s.vx * 0.1, s.y - s.vy * 0.1, s.x - s.vx * 0.22, s.y - s.vy * 0.22);
+      if (s.life <= 0) this.shooting = undefined;
+    }
+
+    // Rayos del sol: cuñas que giran despacio desde el disco.
+    const rays = this.rays;
+    rays.clear();
+    if (p.sun > 0.05) {
+      const cx = this.sun.x;
+      const cy = this.sun.y;
+      const spin = this.tAlive * 0.04;
+      for (let i = 0; i < 7; i++) {
+        const a0 = -Math.PI * 0.95 + (i / 7) * Math.PI * 0.9 + spin;
+        const a1 = a0 + 0.07 + 0.03 * Math.sin(this.tAlive * 0.7 + i);
+        const len = 1100;
+        rays.fillStyle(0xffd090, p.sun * 0.05);
+        rays.fillTriangle(cx, cy, cx + Math.cos(a0) * len, cy + Math.sin(a0) * len, cx + Math.cos(a1) * len, cy + Math.sin(a1) * len);
+      }
+    }
+
+    // Pájaros al amanecer: bandadas pequeñas que cruzan el cielo.
+    if (p.sun > 0.25) {
+      this.nextFlockSec -= dtSec;
+      if (this.nextFlockSec <= 0) {
+        this.nextFlockSec = 5 + this.rnd() * 6;
+        const n = 3 + Math.floor(this.rnd() * 3);
+        const y0 = 120 + this.rnd() * 200;
+        const speed = 60 + this.rnd() * 50;
+        for (let i = 0; i < n; i++) {
+          this.birds.push({
+            x: RENDER.width + 40 + i * 26,
+            y: y0 + (i % 2) * 14 + i * 4,
+            speed,
+            phase: this.rnd() * Math.PI * 2,
+            size: 5 + this.rnd() * 3,
+          });
+        }
+      }
+    }
+    if (this.birds.length > 0) {
+      const color = lerpColor(0x1a1630, 0x3a3660, p.sun);
+      fx.lineStyle(2, color, 0.9);
+      for (const b of this.birds) {
+        b.x -= b.speed * dtSec;
+        b.y += Math.sin(this.tAlive * 0.8 + b.phase) * 4 * dtSec;
+        b.phase += dtSec * 9;
+        const flap = Math.sin(b.phase) * 0.5;
+        fx.lineBetween(b.x, b.y, b.x - b.size, b.y - b.size * (0.6 - flap));
+        fx.lineBetween(b.x, b.y, b.x + b.size, b.y - b.size * (0.6 - flap));
+      }
+      this.birds = this.birds.filter((b) => b.x > -40);
+    }
   }
 }

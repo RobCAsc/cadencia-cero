@@ -9,6 +9,8 @@ const WALK_KPH = 15;
 const RUN_KPH = 28;
 const BASE_COUNT = 7;
 const MAX_COUNT = 12;
+/** Tamaño de los actores en pantalla, a juego con el ciclista (1.4). */
+const ACTOR_SCALE = 1.3;
 
 /**
  * La manada: posición en pantalla desde el gap (mapeo asintótico), escala y
@@ -20,7 +22,9 @@ export class Horde {
   private readonly container: Phaser.GameObjects.Container;
   private readonly zombies: Zombie[] = [];
   private readonly extraAlpha: number[] = [];
+  private readonly mass: Phaser.GameObjects.Image;
   private lungePx = 0;
+  private runLevel = 0;
 
   constructor(scene: Phaser.Scene) {
     this.container = scene.add.container(0, RENDER.groundY).setDepth(2);
@@ -34,6 +38,26 @@ export class Horde {
         g.fillEllipse(190, 60, 60 + i * 52, 22 + i * 16);
       }
       g.generateTexture('horde-glow', 380, 120);
+      g.clear();
+      // La masa: la horda que no cabe en pantalla, una loma oscura de cabezas
+      // detrás de los que sí se ven. Un tier más clara que el asfalto.
+      g.fillStyle(0x1c2130, 1);
+      g.beginPath();
+      g.moveTo(0, 120);
+      const rnd = lcg(77);
+      for (let x = 0; x <= 520; x += 20) {
+        const bump = 46 + Math.sin(x / 38) * 10 + rnd() * 16;
+        g.lineTo(x, 120 - bump);
+        g.lineTo(x + 10, 120 - bump + 9);
+      }
+      g.lineTo(520, 120);
+      g.closePath();
+      g.fillPath();
+      for (let i = 0; i < 14; i++) {
+        g.fillStyle(0xff5544, 0.7);
+        g.fillCircle(20 + rnd() * 480, 60 + rnd() * 30, 1.4);
+      }
+      g.generateTexture('horde-mass', 520, 120);
       g.destroy();
     }
     const glow = scene.add
@@ -41,6 +65,8 @@ export class Horde {
       .setBlendMode(Phaser.BlendModes.ADD)
       .setAlpha(0.85);
     this.container.add(glow);
+    this.mass = scene.add.image(-300, 4, 'horde-mass').setOrigin(0.5, 1).setAlpha(0.35);
+    this.container.add(this.mass);
 
     const rnd = lcg(2024);
     for (let i = 0; i < MAX_COUNT; i++) {
@@ -64,9 +90,13 @@ export class Horde {
 
     this.lungePx *= Math.exp(-9 * dt);
     this.container.x = RENDER.playerX - 30 - gapToPx(gapM) + this.lungePx;
-    const s = hordeScale(gapM);
+    const s = hordeScale(gapM) * ACTOR_SCALE;
     this.container.setScale(s, stumbling ? s * 0.94 : s);
     this.container.setAlpha(gapM > 100 ? 0.85 : 1);
+    this.runLevel += (run01 - this.runLevel) * Math.min(1, dt * 1.5);
+    // Con la oleada la masa de atrás se levanta: son muchos más de los que ves.
+    this.mass.setAlpha(0.3 + this.runLevel * 0.6);
+    this.mass.setScale(1 + this.runLevel * 0.25, 1 + this.runLevel * 0.35);
 
     // Refuerzos: aparecen (uno tras otro) cuando la horda pasa a correr y se
     // desvanecen cuando vuelve a arrastrarse.
@@ -86,5 +116,15 @@ export class Horde {
 
   lunge(): void {
     this.lungePx = 34;
+  }
+
+  /** Posición del frente de la manada en pantalla (px). */
+  get screenX(): number {
+    return this.container.x;
+  }
+
+  /** 0 arrastrándose … 1 a la carrera (con inercia). */
+  get run01(): number {
+    return this.runLevel;
   }
 }

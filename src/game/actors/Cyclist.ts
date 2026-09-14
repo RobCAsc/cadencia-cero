@@ -50,10 +50,13 @@ export class Cyclist {
   private crankAngle = 0;
   private wheelAngle = 0;
   private tAlive = 0;
+  /** 0 = erguido y tranquilo, 1 = recogido sobre el manillar, a tope. Con inercia. */
+  private tuck = 0;
+  private speedMps = 0;
 
   constructor(scene: Phaser.Scene) {
     this.gfx = scene.add.graphics({ x: RENDER.playerX, y: RENDER.groundY }).setDepth(3);
-    this.gfx.setScale(1.15);
+    this.gfx.setScale(1.4);
   }
 
   /** Ángulo de biela acumulado (rad): la cámara se balancea con la pedalada. */
@@ -61,10 +64,17 @@ export class Cyclist {
     return this.crankAngle;
   }
 
-  update(dt: number, rpm: number, speedMps: number): void {
+  /**
+   * @param effort01 fracción de esfuerzo cardíaco: la postura la cuenta. En
+   * Z1 el rider va erguido; en Z4-Z5 se recoge sobre el manillar.
+   */
+  update(dt: number, rpm: number, speedMps: number, effort01 = 0): void {
     this.tAlive += dt;
     this.crankAngle += (rpm / 60) * Math.PI * 2 * dt;
     this.wheelAngle += (speedMps / 0.35) * dt;
+    this.speedMps = speedMps;
+    const targetTuck = Math.max(0, Math.min(1, (effort01 - 0.45) / 0.45));
+    this.tuck += (targetTuck - this.tuck) * Math.min(1, dt * 0.8);
     this.draw(rpm);
   }
 
@@ -78,6 +88,7 @@ export class Cyclist {
       ? Math.sin(this.crankAngle * 2) * Math.min(1.6, 0.6 + (rpm / 60) * 0.5)
       : Math.sin(this.tAlive * 1.6) * 0.7;
     g.rotation = pedaling ? Math.sin(this.crankAngle) * 0.01 : 0;
+    const tuck = this.tuck;
 
     // Faro delantero.
     g.fillStyle(LIGHT, 0.16);
@@ -96,7 +107,8 @@ export class Cyclist {
       y: BB.y - Math.sin(this.crankAngle) * CRANK_R,
     };
     const hip: Point = { x: HIP.x, y: HIP.y + lift * 0.4 };
-    const shoulder: Point = { x: SHOULDER.x, y: SHOULDER.y + lift };
+    // Recogido: los hombros bajan y avanzan hacia el manillar.
+    const shoulder: Point = { x: SHOULDER.x + tuck * 6, y: SHOULDER.y + lift + tuck * 9 };
 
     // Pierna y biela lejanas.
     g.lineStyle(2.5, BIKE, 0.8);
@@ -148,6 +160,19 @@ export class Cyclist {
     g.lineStyle(2, TIRE, 1);
     g.lineBetween(pedalNear.x - 3, pedalNear.y, pedalNear.x + 3, pedalNear.y);
 
+    // Chaqueta: ondea hacia atrás con la velocidad.
+    const flap = Math.min(1, this.speedMps / 9);
+    const wave = Math.sin(this.tAlive * 15) * 2 * flap;
+    g.fillStyle(BODY, 0.85);
+    g.fillTriangle(
+      shoulder.x - 4,
+      shoulder.y + 2,
+      hip.x - 3,
+      hip.y - 2,
+      hip.x - 9 - flap * 8,
+      hip.y - 8 + wave,
+    );
+
     // Torso.
     g.fillStyle(BODY, 1);
     g.fillPoints(
@@ -166,18 +191,18 @@ export class Cyclist {
     g.lineBetween(hip.x, hip.y, kneeNear.x, kneeNear.y);
     g.lineBetween(kneeNear.x, kneeNear.y, pedalNear.x, pedalNear.y);
 
-    // Brazo al manillar.
+    // Brazo al manillar: cuanto más recogido, más doblado el codo.
     const elbow: Point = {
       x: (shoulder.x + BAR.x) / 2 + 1,
-      y: (shoulder.y + BAR.y) / 2 + 4,
+      y: (shoulder.y + BAR.y) / 2 + 4 + tuck * 5,
     };
     g.lineStyle(3.5, BODY, 1);
     g.lineBetween(shoulder.x, shoulder.y, elbow.x, elbow.y);
     g.lineBetween(elbow.x, elbow.y, BAR.x, BAR.y);
 
-    // Cabeza con casco.
-    const headX = shoulder.x + 7;
-    const headY = shoulder.y - 8 + lift * 0.3;
+    // Cabeza con casco: recogido, la cabeza baja y mira al asfalto.
+    const headX = shoulder.x + 7 + tuck * 2;
+    const headY = shoulder.y - 8 + lift * 0.3 + tuck * 3;
     g.fillStyle(BODY, 1);
     g.fillCircle(headX, headY, 6);
     g.fillStyle(BIKE, 1);
