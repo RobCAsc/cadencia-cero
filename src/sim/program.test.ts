@@ -8,13 +8,13 @@ import {
   zombieSpeedAt,
   type TrainingProgram,
 } from './program';
-import { HIIT_30_30 } from './programs/hiit-30-30';
+import { OLEADAS } from './programs/oleadas';
 import { floorEffort } from './zones';
 
 // Velocidades derivadas de las zonas de Oleadas: calentamiento suave,
-// oleada en Z5, recuperación en Z1.
+// oleada en Z4-Z5 (piso Z4), recuperación en Z1-Z2 (piso Z1).
 const WARM = hordeSpeedForZone(0);
-const SURGE = hordeSpeedForZone(5);
+const SURGE = hordeSpeedForZone(4);
 const RECOVER = hordeSpeedForZone(1);
 
 const prog = (segments: TrainingProgram['segments']): TrainingProgram => ({
@@ -25,27 +25,27 @@ const prog = (segments: TrainingProgram['segments']): TrainingProgram => ({
 });
 
 describe('expandProgram', () => {
-  it('expande Oleadas a 17 segmentos, 8 oleadas, 1260 s', () => {
-    const exp = expandProgram(HIIT_30_30);
-    expect(exp).toHaveLength(17);
-    expect(exp.filter((s) => s.kind === 'surge')).toHaveLength(8);
-    expect(totalDurationSec(exp)).toBe(1260);
+  it('expande Oleadas a 13 segmentos, 6 oleadas, 1380 s', () => {
+    const exp = expandProgram(OLEADAS);
+    expect(exp).toHaveLength(13);
+    expect(exp.filter((s) => s.kind === 'surge')).toHaveLength(6);
+    expect(totalDurationSec(exp)).toBe(1380);
   });
 
   it('acumula startSec/endSec correctamente', () => {
-    const exp = expandProgram(HIIT_30_30);
+    const exp = expandProgram(OLEADAS);
     expect(exp[0]).toMatchObject({ kind: 'warmup', startSec: 0, endSec: 300 });
-    expect(exp[1]).toMatchObject({ kind: 'surge', startSec: 300, endSec: 330 });
-    expect(exp[2]).toMatchObject({ kind: 'recover', startSec: 330, endSec: 420 });
-    expect(exp[3]).toMatchObject({ kind: 'surge', startSec: 420, endSec: 450 });
-    expect(exp[16]).toMatchObject({ kind: 'recover', endSec: 1260 });
+    expect(exp[1]).toMatchObject({ kind: 'surge', startSec: 300, endSec: 360 });
+    expect(exp[2]).toMatchObject({ kind: 'recover', startSec: 360, endSec: 480 });
+    expect(exp[3]).toMatchObject({ kind: 'surge', startSec: 480, endSec: 540 });
+    expect(exp[12]).toMatchObject({ kind: 'recover', endSec: 1380 });
   });
 
-  it('numera las oleadas 1..8 y conserva el sourceIndex original', () => {
-    const exp = expandProgram(HIIT_30_30);
+  it('numera las oleadas 1..6 y conserva el sourceIndex original', () => {
+    const exp = expandProgram(OLEADAS);
     const surges = exp.filter((s) => s.kind === 'surge');
-    expect(surges.map((s) => s.waveNumber)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-    expect(surges.every((s) => s.waveTotal === 8)).toBe(true);
+    expect(surges.map((s) => s.waveNumber)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(surges.every((s) => s.waveTotal === 6)).toBe(true);
     expect(surges.every((s) => s.sourceIndex === 1)).toBe(true);
   });
 
@@ -96,20 +96,29 @@ describe('expandProgram', () => {
 });
 
 describe('zombieSpeedAt', () => {
-  const exp = expandProgram(HIIT_30_30);
+  const exp = expandProgram(OLEADAS);
 
   it('devuelve la velocidad del segmento fuera de la rampa', () => {
     expect(zombieSpeedAt(exp, 0, 2)).toBe(WARM);
     expect(zombieSpeedAt(exp, 299.9, 2)).toBe(WARM);
     expect(zombieSpeedAt(exp, 302, 2)).toBe(SURGE);
-    expect(zombieSpeedAt(exp, 329.9, 2)).toBe(SURGE);
-    expect(zombieSpeedAt(exp, 1259.9, 2)).toBe(RECOVER);
+    expect(zombieSpeedAt(exp, 359.9, 2)).toBe(SURGE);
+    expect(zombieSpeedAt(exp, 1379.9, 2)).toBe(RECOVER);
   });
 
   it('rampa lineal de 2 s al entrar a un segmento', () => {
     // A mitad de rampa, la media de las dos velocidades.
     expect(zombieSpeedAt(exp, 301, 2)).toBeCloseTo((WARM + SURGE) / 2, 10);
-    expect(zombieSpeedAt(exp, 331, 2)).toBeCloseTo((SURGE + RECOVER) / 2, 10);
+    expect(zombieSpeedAt(exp, 361, 2)).toBeCloseTo((SURGE + RECOVER) / 2, 10);
+  });
+
+  it('acelera con la rampa larga y frena con la corta', () => {
+    // Subida warmup → oleada con 12 s de rampa: a los 6 s va por la mitad.
+    expect(zombieSpeedAt(exp, 306, 2, 12)).toBeCloseTo((WARM + SURGE) / 2, 10);
+    expect(zombieSpeedAt(exp, 311.9, 2, 12)).toBeLessThan(SURGE);
+    expect(zombieSpeedAt(exp, 312, 2, 12)).toBe(SURGE);
+    // Bajada oleada → recuperación con 2 s: a los 2 s ya frenó del todo.
+    expect(zombieSpeedAt(exp, 362, 2, 12)).toBe(RECOVER);
   });
 
   it('sin rampa en el primer segmento ni con rampSec 0', () => {
@@ -119,6 +128,6 @@ describe('zombieSpeedAt', () => {
 
   it('clampa más allá del final al último segmento', () => {
     expect(zombieSpeedAt(exp, 5000, 2)).toBe(RECOVER);
-    expect(segmentIndexAt(exp, 5000)).toBe(16);
+    expect(segmentIndexAt(exp, 5000)).toBe(12);
   });
 });

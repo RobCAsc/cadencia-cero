@@ -138,22 +138,25 @@ export function segmentIndexAt(segments: readonly ExpandedSegment[], tSec: numbe
 
 /**
  * Velocidad de la horda en t. Al entrar a cada segmento (salvo el primero) la
- * velocidad llega en rampa lineal de rampSec desde la del segmento anterior:
- * un escalón 12→32 se lee como teletransporte; la rampa da una pedalada de
- * margen sin tocar la prescripción.
+ * velocidad llega en rampa lineal desde la del segmento anterior: un escalón
+ * 12→32 se lee como teletransporte. Al acelerar la rampa es rampUpSec (larga,
+ * al paso al que sube un pulso de muñeca); al frenar, rampSec (corta: el
+ * alivio llega enseguida).
  */
 export function zombieSpeedAt(
   segments: readonly ExpandedSegment[],
   tSec: number,
   rampSec: number,
+  rampUpSec: number = rampSec,
 ): number {
   const t = Math.max(0, tSec);
   const i = segmentIndexAt(segments, t);
   const seg = segments[i];
   if (!seg) return 0;
-  const into = t - seg.startSec;
-  if (i === 0 || rampSec <= 0 || into >= rampSec) return seg.zombieSpeedKph;
   const prev = segments[i - 1];
-  if (!prev) return seg.zombieSpeedKph;
-  return prev.zombieSpeedKph + (seg.zombieSpeedKph - prev.zombieSpeedKph) * (into / rampSec);
+  if (i === 0 || !prev) return seg.zombieSpeedKph;
+  const ramp = seg.zombieSpeedKph > prev.zombieSpeedKph ? rampUpSec : rampSec;
+  const into = t - seg.startSec;
+  if (ramp <= 0 || into >= ramp) return seg.zombieSpeedKph;
+  return prev.zombieSpeedKph + (seg.zombieSpeedKph - prev.zombieSpeedKph) * (into / ramp);
 }

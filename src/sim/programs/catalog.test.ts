@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { expandProgram, totalDurationSec } from '../program';
 import { applyAdjustments, PROGRAM_CATALOG } from './catalog';
-import { HIIT_30_30 } from './hiit-30-30';
+import { OLEADAS } from './oleadas';
 
-const hiitEntry = PROGRAM_CATALOG.find((e) => e.program.id === 'hiit-30-30');
-if (!hiitEntry) throw new Error('falta hiit-30-30 en el catálogo');
+const hiitEntry = PROGRAM_CATALOG.find((e) => e.program.id === 'oleadas');
+if (!hiitEntry) throw new Error('falta oleadas en el catálogo');
 
 describe('PROGRAM_CATALOG', () => {
   it('todas las entradas expanden sin errores y con duración positiva', () => {
@@ -41,31 +41,31 @@ describe('PROGRAM_CATALOG', () => {
 
 describe('applyAdjustments', () => {
   it('repeats cambia las ejecuciones totales de las oleadas', () => {
-    const adjusted = applyAdjustments(hiitEntry.program, hiitEntry.adjustments, { repeats: 6 });
+    const adjusted = applyAdjustments(hiitEntry.program, hiitEntry.adjustments, { repeats: 4 });
     const expanded = expandProgram(adjusted);
-    expect(expanded.filter((s) => s.kind === 'surge')).toHaveLength(6);
-    expect(totalDurationSec(expanded)).toBe(300 + 6 * 120);
+    expect(expanded.filter((s) => s.kind === 'surge')).toHaveLength(4);
+    expect(totalDurationSec(expanded)).toBe(300 + 4 * 180);
   });
 
   it('warmupMin cambia solo la duración del calentamiento', () => {
     const adjusted = applyAdjustments(hiitEntry.program, hiitEntry.adjustments, { warmupMin: 8 });
     const expanded = expandProgram(adjusted);
     expect(expanded[0]).toMatchObject({ kind: 'warmup', endSec: 480 });
-    expect(totalDurationSec(expanded)).toBe(480 + 8 * 120);
+    expect(totalDurationSec(expanded)).toBe(480 + 6 * 180);
   });
 
   it('clampa y snapea valores fuera de rango o entre steps', () => {
     const big = applyAdjustments(hiitEntry.program, hiitEntry.adjustments, { repeats: 99 });
-    expect(expandProgram(big).filter((s) => s.kind === 'surge')).toHaveLength(12);
+    expect(expandProgram(big).filter((s) => s.kind === 'surge')).toHaveLength(10);
     const frac = applyAdjustments(hiitEntry.program, hiitEntry.adjustments, { repeats: 4.4 });
     expect(expandProgram(frac).filter((s) => s.kind === 'surge')).toHaveLength(4);
   });
 
   it('no muta el programa base', () => {
     applyAdjustments(hiitEntry.program, hiitEntry.adjustments, { repeats: 3, warmupMin: 2 });
-    const repeat = HIIT_30_30.segments[3];
-    expect(repeat).toMatchObject({ kind: 'repeat', times: 8 });
-    expect(HIIT_30_30.segments[0]).toMatchObject({ durationSec: 300 });
+    const repeat = OLEADAS.segments[3];
+    expect(repeat).toMatchObject({ kind: 'repeat', times: 6 });
+    expect(OLEADAS.segments[0]).toMatchObject({ durationSec: 300 });
   });
 
   it('ignora valores de ajustes que el programa no declara', () => {

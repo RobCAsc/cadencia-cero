@@ -126,7 +126,12 @@ export class RideSim {
       this.inputMode === 'heartRate'
         ? playerSpeedFromEffort(this.effortFrac, this.cfg.effort)
         : playerSpeedKph(this.resistanceLevel, rpm, this.cfg.speed);
-    let zKph = zombieSpeedAt(this.segments, this.elapsedSec, this.cfg.zombieRampSec);
+    let zKph = zombieSpeedAt(
+      this.segments,
+      this.elapsedSec,
+      this.cfg.zombieRampSec,
+      this.cfg.zombieRampUpSec,
+    );
     if (this.caughtGraceSec > 0) zKph *= this.cfg.catch.stumbleSpeedFactor;
 
     // Zona prescrita por el tramo: bajo el piso te alcanzan (la horda corre a

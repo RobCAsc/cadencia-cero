@@ -193,7 +193,7 @@ describe('recommendToday', () => {
     const base = [ride(30), ride(28), ride(26), ride(24), ride(22), ride(20)];
     expect(recommendToday(base, NOW).programId).toBe('fondo');
     const one = [...base, ride(2, { target: 'aerobic' })];
-    expect(recommendToday(one, NOW)).toMatchObject({ programId: 'hiit-30-30', values: { repeats: 5 } });
+    expect(recommendToday(one, NOW)).toMatchObject({ programId: 'oleadas', values: { repeats: 4 } });
     const two = [...one, ride(1, { target: 'anaerobic' })];
     expect(recommendToday(two, NOW).programId).toBe('recuperacion');
   });

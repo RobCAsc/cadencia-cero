@@ -63,9 +63,9 @@ function coastFor(sim: RideSim, sec: number, step = 0.1): SimEvent[] {
 
 describe('RideSim: la integral del gap', () => {
   it('integra gap y distancia con velocidad constante', () => {
-    const sim = new RideSim(steady(1000, 14), cfg(), now, CADENCE);
+    const sim = new RideSim(steady(1000, 14), cfg({ initialGapM: 50 }), now, CADENCE);
     pedalFor(sim, 10, 20); // 20 rpm → 20 km/h vs horda a 14
-    expect(sim.state.gapM).toBeCloseTo(SIM.initialGapM + ((20 - 14) / 3.6) * 10, 1);
+    expect(sim.state.gapM).toBeCloseTo(50 + ((20 - 14) / 3.6) * 10, 1);
     expect(sim.state.distanceM).toBeCloseTo((20 / 3.6) * 10, 1);
     expect(sim.state.timesCaught).toBe(0);
   });
@@ -207,7 +207,7 @@ describe('RideSim: segmentos y fin de sesión', () => {
         { kind: 'steady', durationSec: 10, zone: [0, 5], zombieSpeedKph: 10 },
         { kind: 'surge', durationSec: 10, zone: [0, 5], zombieSpeedKph: 30 },
       ]),
-      cfg({ zombieRampSec: 0 }),
+      cfg({ zombieRampSec: 0, zombieRampUpSec: 0, surgeWarningSec: 5 }),
       now,
       CADENCE,
     );

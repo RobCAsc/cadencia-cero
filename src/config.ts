@@ -118,11 +118,20 @@ export interface SimConfig {
   initialGapM: number;
   /** Clamp del gap: prescripción sobre acumulación de ventaja. */
   gapMaxM: number;
-  /** Rampa lineal de velocidad zombi al entrar a cada segmento. */
+  /** Rampa lineal de la horda al FRENAR al entrar a un segmento más lento. */
   zombieRampSec: number;
+  /**
+   * Rampa al ACELERAR (entrar a un tramo más duro). Larga a propósito: el
+   * pulso óptico tarda 10-30 s en reflejar el esfuerzo, y la horda tiene que
+   * llegar al ritmo al que llega tu corazón, no antes.
+   */
+  zombieRampUpSec: number;
   startResistance: number;
   maxHealth: number;
-  /** Aviso de oleada este tiempo antes de un segmento más rápido. */
+  /**
+   * Aviso este tiempo antes de un tramo más duro. Con pulso como entrada hay
+   * que empezar a empujar ANTES de que la horda acelere: el aviso es la señal.
+   */
   surgeWarningSec: number;
   catch: CatchConfig;
 }
@@ -139,11 +148,15 @@ export const SIM: SimConfig = {
   // Colchón de salida: el pulso tarda uno o dos minutos en subir desde el
   // reposo, y en ese rato el rider es más lento que la horda del calentamiento.
   initialGapM: 100,
-  gapMaxM: 150,
+  // Tope del colchón. Con 150 m, quien se salta las oleadas y recupera "bien"
+  // rellena en la recuperación lo que perdió en la oleada y nunca es
+  // atrapado; con 100 m el intervalo se hace cumplir (ver catalog.pulse.test).
+  gapMaxM: 100,
   zombieRampSec: 2,
+  zombieRampUpSec: 12,
   startResistance: 2,
   maxHealth: 100,
-  surgeWarningSec: 5,
+  surgeWarningSec: 15,
   catch: {
     healthCost: 20,
     knockbackGapM: 12,

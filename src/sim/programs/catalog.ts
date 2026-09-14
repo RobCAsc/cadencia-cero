@@ -1,6 +1,6 @@
 import type { TrainingProgram } from '../program';
 import { FONDO } from './fondo';
-import { HIIT_30_30 } from './hiit-30-30';
+import { OLEADAS } from './oleadas';
 import { PIRAMIDE } from './piramide';
 import { PRIMERA_SALIDA } from './primera-salida';
 import { RECUPERACION } from './recuperacion';
@@ -61,16 +61,16 @@ export const PROGRAM_CATALOG: readonly CatalogEntry[] = [
     adjustments: [warmupMin(5)],
   },
   {
-    program: HIIT_30_30,
-    description: 'La horda carga 30 segundos; recuperas 90. Anaerobio.',
+    program: OLEADAS,
+    description: 'La horda carga un minuto en Z4-Z5; recuperas dos. Anaerobio.',
     adjustments: [
-      { id: 'repeats', label: 'Oleadas', min: 3, max: 12, step: 1, defaultValue: 8, unit: '' },
+      { id: 'repeats', label: 'Oleadas', min: 3, max: 10, step: 1, defaultValue: 6, unit: '' },
       warmupMin(5),
     ],
   },
   {
     program: PIRAMIDE,
-    description: 'Oleadas que crecen 30-60-90 y bajan. Intervalos mixtos.',
+    description: 'Oleadas que crecen 1-1½-2 min y bajan. Intervalos mixtos.',
     adjustments: [warmupMin(5)],
   },
 ];

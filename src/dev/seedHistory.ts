@@ -19,7 +19,7 @@ interface Template {
 
 const TEMPLATES: Template[] = [
   { programId: 'fondo', programName: 'Fondo', target: 'aerobic', durationSec: 1980, kph: 17, zoneWeights: [1, 2, 6, 3, 0, 0], timesCaught: 1 },
-  { programId: 'hiit-30-30', programName: 'Oleadas', target: 'anaerobic', durationSec: 1260, kph: 19, zoneWeights: [1, 2, 3, 3, 2, 1], timesCaught: 3 },
+  { programId: 'oleadas', programName: 'Oleadas', target: 'anaerobic', durationSec: 1380, kph: 19, zoneWeights: [1, 2, 3, 3, 2, 1], timesCaught: 3 },
   { programId: 'recuperacion', programName: 'Recuperación', target: 'recovery', durationSec: 1200, kph: 13, zoneWeights: [3, 5, 3, 0, 0, 0], timesCaught: 0 },
 ];
 

@@ -301,12 +301,12 @@ export function recommendToday(sessions: readonly SessionRecord[], nowMs: number
     return total >= 12 && weekParity === 1
       ? { programId: 'piramide', values: {}, reason: 'La salida dura de la semana: oleadas en pirámide.' }
       : {
-          programId: 'hiit-30-30',
-          values: { repeats: total < 12 ? 5 : 8 },
+          programId: 'oleadas',
+          values: { repeats: total < 12 ? 4 : 6 },
           reason:
             total < 12
-              ? 'La salida dura de la semana: cinco oleadas para empezar.'
-              : 'La salida dura de la semana: ocho oleadas.',
+              ? 'La salida dura de la semana: cuatro oleadas para empezar.'
+              : 'La salida dura de la semana: seis oleadas.',
         };
   }
   return {

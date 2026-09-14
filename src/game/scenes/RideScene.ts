@@ -4,7 +4,7 @@ import type { CadenceSource } from '../../input/CadenceSource';
 import type { HeartRateSource } from '../../input/HeartRateSource';
 import { toSessionRecord, type SessionRecord } from '../../sim/history';
 import { expandProgram, totalDurationSec, type TrainingProgram } from '../../sim/program';
-import { HIIT_30_30 } from '../../sim/programs/hiit-30-30';
+import { OLEADAS } from '../../sim/programs/oleadas';
 import { RideSim } from '../../sim/RideSim';
 import {
   applyAdvice,
@@ -64,7 +64,7 @@ export class RideScene extends Phaser.Scene {
 
   create(): void {
     const program =
-      (this.registry.get('selectedProgram') as TrainingProgram | undefined) ?? HIIT_30_30;
+      (this.registry.get('selectedProgram') as TrainingProgram | undefined) ?? OLEADAS;
     const inputMode = (this.registry.get('inputMode') as InputMode | undefined) ?? 'heartRate';
     const rider = (this.registry.get('riderProfile') as RiderProfile | undefined) ?? RIDER;
     this.sim = new RideSim(program, undefined, undefined, { inputMode, rider });
