@@ -488,6 +488,13 @@ interface ShootingStar {
   life: number;
 }
 
+export interface AtmosphereOptions {
+  /** Niebla por delante de los actores (el campamento no la quiere). */
+  frontFog?: boolean;
+  /** Farolas al borde del asfalto (solo tienen sentido con la carretera en marcha). */
+  lamps?: boolean;
+}
+
 export class Atmosphere {
   private readonly sky: Phaser.GameObjects.Graphics;
   private readonly stars: Phaser.GameObjects.Image;
@@ -520,9 +527,11 @@ export class Atmosphere {
   private shooting: ShootingStar | undefined;
   private readonly rnd = lcg(8675309);
 
-  constructor(scene: Phaser.Scene, withFrontFog = true) {
+  constructor(scene: Phaser.Scene, opts: AtmosphereOptions = {}) {
     ensureTextures(scene);
     const w = RENDER.width;
+    const withFrontFog = opts.frontFog ?? true;
+    const withLamps = opts.lamps ?? true;
 
     this.sky = scene.add.graphics({ x: 0, y: 0 });
     this.stars = scene.add.image(0, 0, 'atm-stars').setOrigin(0, 0);
@@ -557,7 +566,7 @@ export class Atmosphere {
     this.road = scene.add.tileSprite(0, HORIZON_Y - 10, w, 130, 'atm-road').setOrigin(0, 0);
 
     // Farolas al borde del asfalto: pasan con la carretera, por detrás de los actores.
-    for (const spec of LAMPS) {
+    for (const spec of withLamps ? LAMPS : []) {
       const post = scene.add.image(0, HORIZON_Y + 6, 'atm-lamp').setOrigin(0.15, 1).setDepth(1);
       const cone = scene.add
         .image(0, HORIZON_Y - 150, 'atm-lampcone')

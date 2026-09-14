@@ -94,7 +94,7 @@ export class StartScene extends Phaser.Scene {
 
   create(): void {
     // La noche de fondo, atenuada para que la UI respire.
-    this.atmosphere = new Atmosphere(this, false);
+    this.atmosphere = new Atmosphere(this, { frontFog: false, lamps: false });
     this.add.rectangle(0, 0, 1280, 720, 0x05060e, 0.74).setOrigin(0, 0);
     this.campfire = new Campfire(this);
     this.cameras.main.fadeIn(700, 5, 6, 14);
