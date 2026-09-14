@@ -7,7 +7,7 @@ import {
   PROGRAM_CATALOG,
   type CatalogEntry,
 } from '../../sim/programs/catalog';
-import { recommendToday, type Recommendation } from '../../sim/progress';
+import { PHASE_ES, recommendToday, type Recommendation } from '../../sim/progress';
 import type { StoredRiderProfile } from '../../sim/riderProfile';
 import { Atmosphere } from '../atmosphere';
 import { gameAudio } from '../audio';
@@ -23,6 +23,7 @@ const TARGET_COLOR: Record<string, number> = {
   starter: 0x5dade2,
   recovery: 0x2ecc71,
   aerobic: 0x16a085,
+  tempo: 0x48c9b0,
   threshold: 0xf39c12,
   anaerobic: 0xe74c3c,
   mixed: 0x9b59b6,
@@ -38,7 +39,7 @@ const ADJUST_Y0 = 404;
 const ADJUST_PITCH = 56;
 const CHIPS_Y = 552;
 const CHIP_H = 44;
-const CHIP_GAP = 6;
+const CHIP_GAP = 4;
 const CARD_BG = 0x161b28;
 const CARD_BG_SELECTED = 0x1c2334;
 
@@ -242,7 +243,7 @@ export class StartScene extends Phaser.Scene {
     const label = this.add
       .text(x + w / 2, CHIPS_Y + CHIP_H / 2 - 2, chipLabel(entry), {
         fontFamily: FONT_SANS,
-        fontSize: '15px',
+        fontSize: '14px',
         color: UI.textMuted,
       })
       .setOrigin(0.5);
@@ -277,7 +278,11 @@ export class StartScene extends Phaser.Scene {
     });
 
     const recommended = index === this.recommendedIndex;
-    this.cardHeading.setText(recommended ? 'SALIDA DE HOY' : 'TU ELECCIÓN DE HOY');
+    this.cardHeading.setText(
+      recommended
+        ? `SALIDA DE HOY · PLAN: ${PHASE_ES[this.recommendation.phase].toUpperCase()}`
+        : 'TU ELECCIÓN DE HOY',
+    );
     this.cardStripe.setFillStyle(TARGET_COLOR[entry.program.target] ?? 0x7f8c8d);
     this.cardName.setText(entry.program.name);
     this.cardReason.setText(recommended ? this.recommendation.reason : entry.description);

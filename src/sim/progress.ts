@@ -13,7 +13,9 @@ export interface HabitGoals {
 }
 
 const DAY_MS = 86_400_000;
-const HARD_TARGETS = new Set(['anaerobic', 'threshold', 'mixed']);
+const HARD_TARGETS = new Set(['anaerobic', 'threshold', 'mixed', 'tempo']);
+/** Cada tantas semanas cumplidas seguidas, una de descarga. */
+const DELOAD_EVERY_WEEKS = 4;
 
 /** Lunes 00:00 (hora local) de la semana que contiene ms. */
 export function weekStartMs(ms: number): number {
@@ -90,6 +92,41 @@ export function recentWeeks(
 }
 
 /**
+ * Cuenta semanas cumplidas hacia atrás desde `cursor`. Una semana fallada se
+ * perdona una vez si la anterior a ella está cumplida y la posterior también
+ * (`headMet` dice si la posterior a `cursor` cuenta como cumplida).
+ */
+function countWeeksBack(
+  sessions: readonly SessionRecord[],
+  cursor: number,
+  firstWeek: number,
+  goal: HabitGoals,
+  headMet: boolean,
+): number {
+  let streak = 0;
+  let graceUsed = false;
+  let prevMet = headMet;
+  while (cursor >= firstWeek) {
+    if (summarizeWeek(sessions, cursor, goal).met) {
+      streak += 1;
+      prevMet = true;
+    } else {
+      const before = previousWeekStart(cursor);
+      const bridged = prevMet && before >= firstWeek && summarizeWeek(sessions, before, goal).met;
+      if (graceUsed || !bridged) break;
+      graceUsed = true;
+      prevMet = false;
+    }
+    cursor = previousWeekStart(cursor);
+  }
+  return streak;
+}
+
+function firstWeekOf(sessions: readonly SessionRecord[]): number {
+  return weekStartMs(Math.min(...sessions.map((s) => s.startedAtMs)));
+}
+
+/**
  * Semanas seguidas con la meta cumplida. La semana en curso suma si ya está
  * cumplida y no resta si todavía no. Una semana fallada entre dos cumplidas
  * se perdona una vez por racha: la vida pasa, y romper la racha por una
@@ -101,26 +138,24 @@ export function streakWeeks(
   goal: HabitGoals = HABIT,
 ): number {
   if (sessions.length === 0) return 0;
-  const firstWeek = weekStartMs(Math.min(...sessions.map((s) => s.startedAtMs)));
-  let cursor = weekStartMs(nowMs);
-  let streak = 0;
-  let graceUsed = false;
+  const current = weekStartMs(nowMs);
+  const head = summarizeWeek(sessions, current, goal).met ? 1 : 0;
+  return head + countWeeksBack(sessions, previousWeekStart(current), firstWeekOf(sessions), goal, true);
+}
 
-  if (summarizeWeek(sessions, cursor, goal).met) streak += 1;
-  cursor = previousWeekStart(cursor);
-
-  while (cursor >= firstWeek) {
-    if (summarizeWeek(sessions, cursor, goal).met) {
-      streak += 1;
-    } else {
-      const before = previousWeekStart(cursor);
-      const bridged = before >= firstWeek && summarizeWeek(sessions, before, goal).met;
-      if (graceUsed || !bridged) break;
-      graceUsed = true;
-    }
-    cursor = previousWeekStart(cursor);
-  }
-  return streak;
+/**
+ * Semanas cumplidas seguidas que ya TERMINARON (la actual no cuenta), y sin
+ * perdón en la cabeza: si la semana pasada se falló, es 0. Es lo que decide
+ * la descarga: cuatro cumplidas seguidas y la siguiente afloja.
+ */
+export function streakWeeksBefore(
+  sessions: readonly SessionRecord[],
+  nowMs: number,
+  goal: HabitGoals = HABIT,
+): number {
+  if (sessions.length === 0) return 0;
+  const current = weekStartMs(nowMs);
+  return countWeeksBack(sessions, previousWeekStart(current), firstWeekOf(sessions), goal, false);
 }
 
 // ---- la Ruta ---------------------------------------------------------------
@@ -232,86 +267,107 @@ export function brokenRecords(before: readonly SessionRecord[], latest: SessionR
 
 // ---- salida de hoy ---------------------------------------------------------
 
+export type PlanPhase = 'arranque' | 'base' | 'rotacion' | 'descarga';
+
+export const PHASE_ES: Record<PlanPhase, string> = {
+  arranque: 'Arranque',
+  base: 'Base',
+  rotacion: 'Rotación',
+  descarga: 'Descarga',
+};
+
 export interface Recommendation {
   programId: string;
   /** Ajustes sugeridos para ese programa (ids de AdjustmentSpec). */
   values: Record<string, number>;
   reason: string;
+  phase: PlanPhase;
 }
 
+/** Salidas que cuentan para pasar de fase. */
+const BASE_FROM_RIDES = 6;
+const ROTATION_FROM_RIDES = 12;
+
+const NUM_ES: Record<number, string> = { 4: 'cuatro', 6: 'seis', 8: 'ocho' };
+
+const rec = (
+  phase: PlanPhase,
+  programId: string,
+  values: Record<string, number>,
+  reason: string,
+): Recommendation => ({ phase, programId, values, reason });
+
 /**
- * Qué salida toca hoy. Quien empieza recibe salidas cortas y suaves; después
- * la semana rota fondo → oleadas → recuperación, sin dos duras seguidas y sin
- * exigir nada tras una salida ya hecha hoy. Un principio simple y explicable
- * vale más aquí que un planificador listo: el rider tiene que entenderlo.
+ * Qué salida toca hoy: un plan por fases que se explica solo.
+ * - Arranque (salidas 1-5, unas dos semanas): corto y suave, Z1-Z2, sin oleadas.
+ * - Base (6-11, otras dos semanas): fondo más largo y los primeros empujones en Z3.
+ * - Rotación (12+): fondo → oleadas → recuperación; con más base, umbral y
+ *   pirámide alternan por semanas, y las oleadas crecen 4 → 6 → 8.
+ * - Descarga: tras cuatro semanas cumplidas seguidas, una suave para asimilar.
+ * El volumen sube unos minutos por semana con las salidas hechas, nunca de
+ * golpe, y jamás se encadenan dos días duros ni se exige nada tras una salida
+ * ya hecha hoy.
  */
 export function recommendToday(sessions: readonly SessionRecord[], nowMs: number): Recommendation {
   const countable = sessions.filter(isCountable);
   const total = countable.length;
   const thisWeek = countable.filter((s) => weekStartMs(s.startedAtMs) === weekStartMs(nowMs)).length;
-  const last = countable[countable.length - 1];
+  const last = countable[total - 1];
   const lastWasToday = last !== undefined && sameLocalDay(last.startedAtMs, nowMs);
   const lastWasHard =
     last !== undefined && HARD_TARGETS.has(last.target) && nowMs - last.startedAtMs < 2 * DAY_MS;
   const weekParity = Math.floor(weekStartMs(nowMs) / (7 * DAY_MS)) % 2;
+  // Carga progresiva: un minuto más de tramo principal por salida hecha.
+  const easyMin = Math.min(15, 8 + total);
+  const baseMin = Math.min(25, 10 + total);
+  const phase: PlanPhase = total < BASE_FROM_RIDES ? 'arranque' : total < ROTATION_FROM_RIDES ? 'base' : 'rotacion';
 
   if (total === 0) {
-    return {
-      programId: 'primera-salida',
-      values: {},
-      reason: 'Tu primera salida: doce minutos para conocer la bici y la horda.',
-    };
+    return rec('arranque', 'primera-salida', {}, 'Tu primera salida: doce minutos para conocer la bici y la horda.');
   }
   if (total === 1) {
-    return {
-      programId: 'primera-salida',
-      values: {},
-      reason: 'Una corta más para asentar el gesto. La horda sigue lenta.',
-    };
-  }
-  if (total < 6) {
-    return total % 2 === 0
-      ? {
-          programId: 'recuperacion',
-          values: { warmupMin: 3 },
-          reason: 'Semanas de arranque: rodar suave y seguido vale más que apretar.',
-        }
-      : {
-          programId: 'fondo',
-          values: { warmupMin: 3 },
-          reason: 'Semanas de arranque: hoy un poco más largo, sin oleadas.',
-        };
+    return rec('arranque', 'primera-salida', {}, 'Una corta más para asentar el gesto. La horda sigue lenta.');
   }
   if (lastWasToday) {
-    return {
-      programId: 'recuperacion',
-      values: {},
-      reason: 'Ya saliste hoy. Si repites, que sea suave.',
-    };
+    return rec(phase, 'recuperacion', { warmupMin: 3, mainMin: 10 }, 'Ya saliste hoy. Si repites, que sea suave.');
   }
+  if (phase === 'arranque') {
+    return total % 2 === 0
+      ? rec('arranque', 'recuperacion', { warmupMin: 3, mainMin: easyMin }, 'Semanas de arranque: rodar suave y seguido vale más que apretar.')
+      : rec('arranque', 'fondo', { warmupMin: 3, mainMin: baseMin }, 'Semanas de arranque: hoy un poco más largo, sin oleadas.');
+  }
+
+  const doneBefore = streakWeeksBefore(sessions, nowMs);
+  if (doneBefore > 0 && doneBefore % DELOAD_EVERY_WEEKS === 0 && thisWeek < HABIT.sessionsPerWeek) {
+    const reason = `Semana de descarga: llevas ${doneBefore} cumplidas seguidas. Hoy suave, el cuerpo asimila.`;
+    return thisWeek === 0
+      ? rec('descarga', 'fondo', { mainMin: Math.round(baseMin * 0.7) }, reason)
+      : rec('descarga', 'recuperacion', { mainMin: easyMin }, reason);
+  }
+
+  const closing = thisWeek >= 3 ? 'Semana cumplida. Lo de hoy es regalo: suave.' : 'Tercera de la semana: recuperación para cerrar.';
+
+  if (phase === 'base') {
+    if (thisWeek === 0) return rec('base', 'fondo', { mainMin: baseMin }, 'Base: la primera de la semana, larga y en Z2.');
+    if (thisWeek === 1) {
+      return lastWasHard
+        ? rec('base', 'fondo', { mainMin: baseMin }, 'Ayer fue dura: hoy base, la horda lejos.')
+        : rec('base', 'empujones', {}, 'Primeros empujones: dos minutos en Z3, tres veces. Sin sprints todavía.');
+    }
+    return rec('base', 'recuperacion', { mainMin: easyMin }, closing);
+  }
+
+  const repeats = total < 18 ? 4 : total < 30 ? 6 : 8;
   if (thisWeek === 0) {
-    return total >= 12 && weekParity === 1
-      ? { programId: 'umbral', values: {}, reason: 'Primera salida de la semana: presión sostenida.' }
-      : { programId: 'fondo', values: {}, reason: 'Primera salida de la semana: base aerobia.' };
+    return total >= 24 && weekParity === 1
+      ? rec('rotacion', 'umbral', {}, 'Primera salida de la semana: presión sostenida.')
+      : rec('rotacion', 'fondo', { mainMin: baseMin }, 'Primera salida de la semana: base aerobia.');
   }
   if (thisWeek === 1) {
-    if (lastWasHard) {
-      return { programId: 'fondo', values: {}, reason: 'Ayer fue dura: hoy base, la horda lejos.' };
-    }
-    return total >= 12 && weekParity === 1
-      ? { programId: 'piramide', values: {}, reason: 'La salida dura de la semana: oleadas en pirámide.' }
-      : {
-          programId: 'oleadas',
-          values: { repeats: total < 12 ? 4 : 6 },
-          reason:
-            total < 12
-              ? 'La salida dura de la semana: cuatro oleadas para empezar.'
-              : 'La salida dura de la semana: seis oleadas.',
-        };
+    if (lastWasHard) return rec('rotacion', 'fondo', { mainMin: baseMin }, 'Ayer fue dura: hoy base, la horda lejos.');
+    return total >= 24 && weekParity === 1
+      ? rec('rotacion', 'piramide', {}, 'La salida dura de la semana: oleadas en pirámide.')
+      : rec('rotacion', 'oleadas', { repeats }, `La salida dura de la semana: ${NUM_ES[repeats] ?? repeats} oleadas.`);
   }
-  return {
-    programId: 'recuperacion',
-    values: {},
-    reason: thisWeek >= 3 ? 'Semana cumplida. Lo de hoy es regalo: suave.' : 'Tercera de la semana: recuperación para cerrar.',
-  };
+  return rec('rotacion', 'recuperacion', { mainMin: easyMin }, closing);
 }

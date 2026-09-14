@@ -68,6 +68,15 @@ describe('applyAdjustments', () => {
     expect(OLEADAS.segments[0]).toMatchObject({ durationSec: 300 });
   });
 
+  it('mainMin escala los tramos steady en proporción y no toca el resto', () => {
+    const entry = PROGRAM_CATALOG.find((e) => e.program.id === 'fondo');
+    if (!entry) throw new Error('falta fondo');
+    const short = expandProgram(applyAdjustments(entry.program, entry.adjustments, { mainMin: 10 }));
+    expect(short.filter((s) => s.kind === 'steady').map((s) => s.durationSec)).toEqual([240, 120, 240]);
+    expect(short[0]).toMatchObject({ kind: 'warmup', durationSec: 300 });
+    expect(totalDurationSec(short)).toBe(300 + 600 + 180);
+  });
+
   it('ignora valores de ajustes que el programa no declara', () => {
     const entry = PROGRAM_CATALOG.find((e) => e.program.id === 'umbral');
     if (!entry) throw new Error('falta umbral');

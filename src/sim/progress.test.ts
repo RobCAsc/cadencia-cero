@@ -8,6 +8,7 @@ import {
   REFUGES,
   routeProgress,
   streakWeeks,
+  streakWeeksBefore,
   summarizeWeek,
   weekStartMs,
 } from './progress';
@@ -113,6 +114,13 @@ describe('streakWeeks', () => {
   it('no perdona si detrás del hueco no hay nada', () => {
     expect(streakWeeks([...metWeek(1), ride(20)], NOW)).toBe(1);
   });
+
+  it('streakWeeksBefore no cuenta la semana en curso ni perdona en la cabeza', () => {
+    expect(streakWeeksBefore([...metWeek(0), ...metWeek(1), ...metWeek(2)], NOW)).toBe(2);
+    expect(streakWeeksBefore([...metWeek(0), ride(8), ...metWeek(2)], NOW)).toBe(0);
+    expect(streakWeeksBefore([...metWeek(1), ...metWeek(3)], NOW)).toBe(2); // hueco en medio: sí
+    expect(streakWeeksBefore([], NOW)).toBe(0);
+  });
 });
 
 describe('routeProgress', () => {
@@ -177,32 +185,73 @@ describe('personalRecords y brokenRecords', () => {
   });
 });
 
-describe('recommendToday', () => {
+describe('recommendToday: el plan por fases', () => {
+  const metWeek = (weeksAgo: number) => [
+    ride(weeksAgo * 7 + 0),
+    ride(weeksAgo * 7 + 1),
+    ride(weeksAgo * 7 + 2),
+  ];
+  /** n salidas repartidas en semanas pasadas (cada dos días desde hace una semana). */
+  const spread = (n: number) => Array.from({ length: n }, (_, i) => ride(7 + i * 2));
+
   it('quien empieza recibe la primera salida dos veces', () => {
-    expect(recommendToday([], NOW).programId).toBe('primera-salida');
+    expect(recommendToday([], NOW)).toMatchObject({ phase: 'arranque', programId: 'primera-salida' });
     expect(recommendToday([ride(2)], NOW).programId).toBe('primera-salida');
   });
 
-  it('en el arranque alterna recuperación y fondo con calentamiento corto', () => {
+  it('arranque (salidas 2-5): alterna recuperación y fondo, cortos, y el volumen sube con cada salida', () => {
     const two = [ride(6), ride(4)];
-    expect(recommendToday(two, NOW)).toMatchObject({ programId: 'recuperacion', values: { warmupMin: 3 } });
-    expect(recommendToday([...two, ride(2)], NOW)).toMatchObject({ programId: 'fondo' });
+    expect(recommendToday(two, NOW)).toMatchObject({
+      phase: 'arranque',
+      programId: 'recuperacion',
+      values: { warmupMin: 3, mainMin: 10 },
+    });
+    expect(recommendToday([...two, ride(2)], NOW)).toMatchObject({
+      phase: 'arranque',
+      programId: 'fondo',
+      values: { warmupMin: 3, mainMin: 13 },
+    });
+    expect(recommendToday([...two, ride(2), ride(1)], NOW)).toMatchObject({
+      programId: 'recuperacion',
+      values: { mainMin: 12 },
+    });
   });
 
-  it('con base hecha, la semana rota fondo → oleadas → recuperación', () => {
-    const base = [ride(30), ride(28), ride(26), ride(24), ride(22), ride(20)];
-    expect(recommendToday(base, NOW).programId).toBe('fondo');
+  it('base (salidas 6-11): fondo más largo, luego los primeros empujones, luego recuperación', () => {
+    const base = spread(6);
+    expect(recommendToday(base, NOW)).toMatchObject({ phase: 'base', programId: 'fondo', values: { mainMin: 16 } });
     const one = [...base, ride(2, { target: 'aerobic' })];
+    expect(recommendToday(one, NOW)).toMatchObject({ phase: 'base', programId: 'empujones' });
+    const two = [...one, ride(1, { target: 'tempo' })];
+    expect(recommendToday(two, NOW).programId).toBe('recuperacion');
+  });
+
+  it('rotación (12+): fondo → oleadas → recuperación, con oleadas que crecen 4 → 6 → 8', () => {
+    const twelve = spread(12);
+    expect(recommendToday(twelve, NOW)).toMatchObject({ phase: 'rotacion', programId: 'fondo', values: { mainMin: 22 } });
+    const one = [...twelve, ride(2, { target: 'aerobic' })];
     expect(recommendToday(one, NOW)).toMatchObject({ programId: 'oleadas', values: { repeats: 4 } });
+    expect(recommendToday([...spread(20), ride(2, { target: 'aerobic' })], NOW).values).toMatchObject({ repeats: 6 });
+    expect(recommendToday([...spread(32), ride(2, { target: 'aerobic' })], NOW).values).toMatchObject({ repeats: 8 });
     const two = [...one, ride(1, { target: 'anaerobic' })];
     expect(recommendToday(two, NOW).programId).toBe('recuperacion');
   });
 
+  it('descarga: tras cuatro semanas cumplidas seguidas, la siguiente afloja', () => {
+    const four = [...metWeek(1), ...metWeek(2), ...metWeek(3), ...metWeek(4)];
+    expect(recommendToday(four, NOW)).toMatchObject({ phase: 'descarga', programId: 'fondo', values: { mainMin: 15 } });
+    expect(recommendToday([...four, ride(1)], NOW)).toMatchObject({ phase: 'descarga', programId: 'recuperacion' });
+    // Con tres cumplidas no hay descarga; con la semana pasada fallada, tampoco.
+    expect(recommendToday([...metWeek(1), ...metWeek(2), ...metWeek(3)], NOW).phase).toBe('base');
+    const broken = [ride(8), ...metWeek(2), ...metWeek(3), ...metWeek(4), ...metWeek(5)];
+    expect(recommendToday(broken, NOW).phase).toBe('rotacion');
+  });
+
   it('no encadena dos duras ni exige nada si ya saliste hoy', () => {
-    const base = [ride(30), ride(28), ride(26), ride(24), ride(22), ride(20)];
-    const hardYesterday = [...base, ride(1, { target: 'anaerobic' })];
+    const twelve = spread(12);
+    const hardYesterday = [...twelve, ride(1, { target: 'anaerobic' })];
     expect(recommendToday(hardYesterday, NOW).programId).toBe('fondo');
-    const today = [...base, ride(0)];
-    expect(recommendToday(today, NOW).programId).toBe('recuperacion');
+    const today = [...twelve, ride(0)];
+    expect(recommendToday(today, NOW)).toMatchObject({ programId: 'recuperacion', values: { mainMin: 10 } });
   });
 });

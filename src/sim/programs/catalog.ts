@@ -1,4 +1,5 @@
 import type { TrainingProgram } from '../program';
+import { EMPUJONES } from './empujones';
 import { FONDO } from './fondo';
 import { OLEADAS } from './oleadas';
 import { PIRAMIDE } from './piramide';
@@ -11,9 +12,11 @@ import { UMBRAL } from './umbral';
  * editor. La semántica es genérica por id:
  * - 'repeats': ejecuciones totales de los bloques repeat del programa.
  * - 'warmupMin': duración del calentamiento, en minutos.
+ * - 'mainMin': duración total de los tramos 'steady', en minutos, escalados
+ *   en proporción (así el plan acorta o alarga una salida sin reescribirla).
  */
 export interface AdjustmentSpec {
-  id: 'repeats' | 'warmupMin';
+  id: 'repeats' | 'warmupMin' | 'mainMin';
   label: string;
   min: number;
   max: number;
@@ -39,6 +42,16 @@ const warmupMin = (defaultValue: number): AdjustmentSpec => ({
   unit: 'min',
 });
 
+const mainMin = (defaultValue: number, min: number, max: number): AdjustmentSpec => ({
+  id: 'mainMin',
+  label: 'Tramo principal',
+  min,
+  max,
+  step: 1,
+  defaultValue,
+  unit: 'min',
+});
+
 export const PROGRAM_CATALOG: readonly CatalogEntry[] = [
   {
     program: PRIMERA_SALIDA,
@@ -48,17 +61,25 @@ export const PROGRAM_CATALOG: readonly CatalogEntry[] = [
   {
     program: RECUPERACION,
     description: 'Gira las piernas con la horda lejos. Sin exigencia.',
-    adjustments: [warmupMin(3)],
+    adjustments: [warmupMin(3), mainMin(15, 8, 30)],
   },
   {
     program: FONDO,
     description: 'Ritmo aerobio sostenido con un tramo de tempo al medio.',
-    adjustments: [warmupMin(5)],
+    adjustments: [warmupMin(5), mainMin(25, 10, 40)],
+  },
+  {
+    program: EMPUJONES,
+    description: 'Dos minutos en Z3, tres veces. Los primeros esfuerzos.',
+    adjustments: [
+      { id: 'repeats', label: 'Empujones', min: 2, max: 6, step: 1, defaultValue: 3, unit: '' },
+      warmupMin(5),
+    ],
   },
   {
     program: UMBRAL,
     description: 'Un perseguidor sosteniendo presión veinte minutos.',
-    adjustments: [warmupMin(5)],
+    adjustments: [warmupMin(5), mainMin(20, 10, 30)],
   },
   {
     program: OLEADAS,
@@ -96,6 +117,19 @@ export function applyAdjustments(
       segments = segments.map((segment) =>
         segment.kind === 'repeat' ? { ...segment, times: value } : segment,
       );
+    } else if (spec.id === 'mainMin') {
+      const steadySec = segments.reduce(
+        (acc, segment) => acc + (segment.kind === 'steady' ? segment.durationSec : 0),
+        0,
+      );
+      if (steadySec > 0) {
+        const factor = (value * 60) / steadySec;
+        segments = segments.map((segment) =>
+          segment.kind === 'steady'
+            ? { ...segment, durationSec: Math.round(segment.durationSec * factor) }
+            : segment,
+        );
+      }
     } else {
       const index = segments.findIndex((segment) => segment.kind === 'warmup');
       const warmup = segments[index];
