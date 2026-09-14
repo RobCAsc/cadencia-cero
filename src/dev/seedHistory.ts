@@ -23,11 +23,17 @@ const TEMPLATES: Template[] = [
   { programId: 'recuperacion', programName: 'Recuperación', target: 'recovery', durationSec: 1200, kph: 13, zoneWeights: [3, 5, 3, 0, 0, 0], timesCaught: 0 },
 ];
 
-function record(startedAtMs: number, t: Template, restBpm: number, seed: number): SessionRecord {
+function record(startedAtMs: number, t: Template, restBpm: number, seed: number, progress01: number): SessionRecord {
   const wsum = t.zoneWeights.reduce((a, b) => a + b, 0);
   const zoneSec = t.zoneWeights.map((w) => (t.durationSec * w) / wsum);
   const wobble = 0.9 + ((seed * 37) % 20) / 100; // 0.9..1.1 determinista
+  const hasSurges = t.programId === 'oleadas';
   return {
+    // Los tres números de forma mejoran con las semanas: reposo baja,
+    // recuperación sube, precisión de zona sube.
+    preRideRestBpm: Math.round(restBpm + 5 - progress01 * 3 + ((seed * 13) % 3)),
+    ...(hasSurges ? { recoveryDrops: [12, 14, 15].map((d) => Math.round(d + progress01 * 9 + ((seed * 7) % 3))) } : {}),
+    inZoneSec: Math.round(t.durationSec * (0.55 + progress01 * 0.3)),
     id: `${startedAtMs}-${t.programId}`,
     startedAtMs,
     programId: t.programId,
@@ -62,7 +68,7 @@ export function seedHistory(nowMs: number): SessionRecord[] {
     for (let r = 0; r < rides; r++) {
       const startedAtMs = weekStart + r * 2 * DAY + 9 * 3_600_000;
       if (startedAtMs > nowMs) continue;
-      out.push(record(startedAtMs, TEMPLATES[r % TEMPLATES.length]!, restBpm, seed++));
+      out.push(record(startedAtMs, TEMPLATES[r % TEMPLATES.length]!, restBpm, seed++, (5 - weeksAgo) / 5));
     }
   }
   return out.sort((a, b) => a.startedAtMs - b.startedAtMs);

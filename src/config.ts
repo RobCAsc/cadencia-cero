@@ -114,6 +114,13 @@ export interface SimConfig {
   heartRateSmoothingSec: number;
   /** Ventana del pico sostenido (para aprender el máximo sin contar picos de ruido). */
   heartRatePeakWindowSec: number;
+  /**
+   * Recuperación cardíaca: tras una oleada, el pico se busca durante este
+   * tiempo (el pulso óptico sigue subiendo unos segundos después de parar)...
+   */
+  recoveryPeakWindowSec: number;
+  /** ...y la caída se mide a este tiempo del final de la oleada (el minuto clásico). */
+  recoveryWindowSec: number;
   maxDtSec: number;
   initialGapM: number;
   /** Clamp del gap: prescripción sobre acumulación de ventaja. */
@@ -144,6 +151,8 @@ export const SIM: SimConfig = {
   heartRateDecayBpmPerSec: 2,
   heartRateSmoothingSec: 2,
   heartRatePeakWindowSec: 5,
+  recoveryPeakWindowSec: 20,
+  recoveryWindowSec: 60,
   maxDtSec: 0.25,
   // Colchón de salida: el pulso tarda uno o dos minutos en subir desde el
   // reposo, y en ese rato el rider es más lento que la horda del calentamiento.

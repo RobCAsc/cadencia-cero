@@ -31,6 +31,8 @@ export interface SessionRecord {
   inZoneSec?: number;
   /** Segundos por encima del techo del tramo. */
   aboveZoneSec?: number;
+  /** Caídas de pulso (bpm) en el minuto tras cada oleada. */
+  recoveryDrops?: number[];
   /** Reposo del perfil ese día: su tendencia es el indicador de salud más honesto. */
   hrRestBpm: number;
   /** Reposo medido en el ritual de un minuto antes de salir (si se hizo). */
@@ -68,6 +70,7 @@ export function toSessionRecord(input: SessionInput): SessionRecord {
     zoneSec: [...s.zoneSec],
     inZoneSec: s.inZoneSec,
     aboveZoneSec: s.aboveZoneSec,
+    recoveryDrops: [...s.recoveryDrops],
     hrRestBpm: input.hrRestBpm,
     ...(input.preRideRestBpm !== undefined ? { preRideRestBpm: input.preRideRestBpm } : {}),
   };

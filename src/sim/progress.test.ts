@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SessionRecord } from './history';
 import {
   brokenRecords,
+  healthTrends,
   personalRecords,
   preRideRestReadings,
   readiness,
@@ -282,5 +283,45 @@ describe('readiness: el reposo del ritual contra lo normal', () => {
 
   it('las salidas sin lectura no cuentan para la base', () => {
     expect(preRideRestReadings([ride(3), withRest(2, 60), ride(1)])).toEqual([60]);
+  });
+});
+
+describe('healthTrends: reposo, recuperación cardíaca y precisión de zona', () => {
+  it('sin datos, todo undefined', () => {
+    const t = healthTrends([ride(3), ride(1)]);
+    expect(t.restBpm).toEqual({ now: undefined, before: undefined });
+    expect(t.recoveryBpm).toEqual({ now: undefined, before: undefined });
+    expect(t.zonePrecision).toEqual({ now: undefined, before: undefined });
+  });
+
+  it('compara la ventana reciente con la anterior', () => {
+    const sessions = Array.from({ length: 14 }, (_, i) =>
+      ride(28 - i * 2, {
+        preRideRestBpm: 70 - i, // baja de 70 a 57
+        recoveryDrops: i < 4 ? undefined : [10 + i, 12 + i], // aparece con las oleadas, y crece
+        inZoneSec: 1200 * (0.5 + i * 0.03), // de 50 % a 89 %
+      }),
+    );
+    const t = healthTrends(sessions);
+    // Reposo: mediana de las últimas 7 (63..57 → 60) vs. las 7 anteriores (70..64 → 67).
+    expect(t.restBpm.now).toBe(60);
+    expect(t.restBpm.before).toBe(67);
+    // Recuperación: 10 salidas con caídas; últimas 5 (i 9..13) media de (11+i): 22; anteriores (i 4..8): 17.
+    expect(t.recoveryBpm.now).toBeCloseTo(22);
+    expect(t.recoveryBpm.before).toBeCloseTo(17);
+    // Precisión: últimas 5 (i 9..13) → 0.5 + 0.03·11 = 0.83; anteriores (i 4..8) → 0.68.
+    expect(t.zonePrecision.now).toBeCloseTo(0.83);
+    expect(t.zonePrecision.before).toBeCloseTo(0.68);
+  });
+
+  it('con pocas salidas hay "ahora" pero no "antes"', () => {
+    const t = healthTrends([
+      ride(5, { recoveryDrops: [15], inZoneSec: 600 }),
+      ride(3, { recoveryDrops: [17], inZoneSec: 600 }),
+      ride(1),
+    ]);
+    expect(t.recoveryBpm).toEqual({ now: 16, before: undefined });
+    expect(t.zonePrecision.now).toBeCloseTo(0.5);
+    expect(t.zonePrecision.before).toBeUndefined();
   });
 });

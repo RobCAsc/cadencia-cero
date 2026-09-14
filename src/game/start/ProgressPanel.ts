@@ -1,12 +1,14 @@
 import Phaser from 'phaser';
 import type { SessionRecord } from '../../sim/history';
 import {
+  healthTrends,
   personalRecords,
   recentWeeks,
   routeProgress,
   streakWeeks,
   summarizeWeek,
   weekStartMs,
+  type Trend,
 } from '../../sim/progress';
 import { formatMMSS } from '../format';
 import { FONT_MONO, FONT_SANS, UI } from '../theme';
@@ -186,22 +188,47 @@ export class ProgressPanel {
       this.text(this.x, y, 'Tu primera salida abre la Ruta. Corta y suave: lo que importa es volver mañana.', 17, UI.textMuted, undefined, this.width);
       return;
     }
-    const lines: string[] = [];
-    if (r.lowestRestBpm !== undefined) {
-      const trend =
-        r.restBpmChange === undefined
-          ? ''
-          : r.restBpmChange < 0
-            ? `  (${r.restBpmChange} bpm desde la primera salida)`
-            : r.restBpmChange > 0
-              ? `  (+${r.restBpmChange} bpm desde la primera salida)`
-              : '  (igual que en la primera salida)';
-      lines.push(`Reposo más bajo: ${r.lowestRestBpm} bpm${trend}`);
-    }
-    lines.push(`Sin ser alcanzado: ${r.cleanRides} de ${r.rides} salidas`);
-    lines.push(`Más larga: ${formatMMSS(r.longestRideSec)} · ${km1(r.longestRideKm)} km`);
-    if (r.bestActiveMin > 0) lines.push(`Mejor cardio en una salida: ${Math.round(r.bestActiveMin)} min`);
-    lines.forEach((line, i) => this.text(this.x, y + i * 26, line, 17, UI.textMuted));
+    // Los tres números que un pulsómetro sí puede dar, con su tendencia:
+    // reposo (baja con la forma), recuperación (sube) y precisión de zona.
+    const t = healthTrends(sessions);
+    const lines: Array<[string, string]> = [];
+    lines.push([
+      'Reposo antes de salir',
+      t.restBpm.now === undefined
+        ? 'mídelo con el minuto de calma'
+        : `${Math.round(t.restBpm.now)} bpm${this.delta(t.restBpm, 'bpm', true)}`,
+    ]);
+    lines.push([
+      'Recuperación en 1 min',
+      t.recoveryBpm.now === undefined
+        ? 'aparece con las primeras oleadas'
+        : `${Math.round(t.recoveryBpm.now)} lpm${this.delta(t.recoveryBpm, 'lpm', false)}`,
+    ]);
+    lines.push([
+      'Precisión de zona',
+      t.zonePrecision.now === undefined
+        ? '––'
+        : `${Math.round(t.zonePrecision.now * 100)} %${this.delta(
+            { now: t.zonePrecision.now * 100, before: t.zonePrecision.before === undefined ? undefined : t.zonePrecision.before * 100 },
+            'pts',
+            false,
+          )}`,
+    ]);
+    lines.push(['Sin ser alcanzado', `${r.cleanRides} de ${r.rides} salidas`]);
+    lines.push(['Más larga', `${formatMMSS(r.longestRideSec)} · ${km1(r.longestRideKm)} km`]);
+    lines.forEach(([label, value], i) => {
+      this.text(this.x, y + i * 26, label, 16, UI.textDim);
+      this.text(this.x + 190, y + i * 26, value, 17, UI.textMuted);
+    });
+  }
+
+  /** " · −3 bpm vs. antes" en verde si mejora, ámbar si empeora; nada sin "antes". */
+  private delta(trend: Trend, unit: string, lowerIsBetter: boolean): string {
+    if (trend.now === undefined || trend.before === undefined) return '';
+    const d = Math.round(trend.now - trend.before);
+    if (d === 0) return ' · igual que antes';
+    const better = lowerIsBetter ? d < 0 : d > 0;
+    return ` · ${d > 0 ? '+' : ''}${d} ${unit} vs. antes${better ? ' ✓' : ''}`;
   }
 
   // ---- utilidades ------------------------------------------------------------

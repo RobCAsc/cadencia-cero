@@ -419,3 +419,56 @@ export function readiness(sessions: readonly SessionRecord[], todayBpm: number):
   const deltaBpm = Math.round(todayBpm - baselineBpm);
   return { state: deltaBpm >= ELEVATED_REST_BPM ? 'elevated' : 'normal', baselineBpm, deltaBpm };
 }
+
+// ---- mejorar: los tres números que un pulsómetro sí puede dar ---------------
+
+export interface Trend {
+  /** Valor reciente (ventana de las últimas salidas), o undefined si aún no hay bastantes. */
+  now: number | undefined;
+  /** El mismo cálculo sobre la ventana anterior, para comparar. */
+  before: number | undefined;
+}
+
+export interface HealthTrends {
+  /** Reposo antes de salir: mediana de las últimas 7 lecturas frente a las 7 anteriores. Baja con la forma. */
+  restBpm: Trend;
+  /** Recuperación cardíaca: caída media (bpm en 1 min) de las últimas 5 salidas con oleadas. Sube con la forma. */
+  recoveryBpm: Trend;
+  /** Precisión de zona: fracción media de la salida dentro de la zona prescrita (últimas 5). */
+  zonePrecision: Trend;
+}
+
+function mean(values: readonly number[]): number {
+  return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+function windowed(
+  values: readonly number[],
+  size: number,
+  reduce: (xs: readonly number[]) => number,
+  minCount: number,
+): Trend {
+  const now = values.slice(-size);
+  const before = values.slice(-2 * size, -size);
+  return {
+    now: now.length >= minCount ? reduce(now) : undefined,
+    before: before.length >= minCount ? reduce(before) : undefined,
+  };
+}
+
+export function healthTrends(sessions: readonly SessionRecord[]): HealthTrends {
+  const rests = preRideRestReadings(sessions);
+  const recoveries = sessions
+    .map((s) => s.recoveryDrops)
+    .filter((d): d is number[] => d !== undefined && d.length > 0)
+    .map((d) => mean(d));
+  const precision = sessions
+    .filter(isCountable)
+    .filter((s) => s.inZoneSec !== undefined && s.durationSec > 0)
+    .map((s) => (s.inZoneSec ?? 0) / s.durationSec);
+  return {
+    restBpm: windowed(rests, BASELINE_READINGS, median, READINESS_MIN_READINGS),
+    recoveryBpm: windowed(recoveries, 5, mean, 2),
+    zonePrecision: windowed(precision, 5, mean, 2),
+  };
+}

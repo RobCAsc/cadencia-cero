@@ -278,6 +278,53 @@ describe('RideSim en modo pulso', () => {
     expect(easy.state.aboveZone).toBe(true);
   });
 
+  it('mide la recuperación cardíaca: cuánto baja el pulso en el minuto tras una oleada', () => {
+    const sim = new RideSim(
+      {
+        id: 't',
+        name: 't',
+        target: 't',
+        segments: [
+          { kind: 'surge', durationSec: 30, zone: [0, 5], zombieSpeedKph: 1 },
+          { kind: 'recover', durationSec: 120, zone: [0, 5], zombieSpeedKph: 1 },
+        ],
+      },
+      cfg({ initialGapM: 100 }),
+      now,
+      { inputMode: 'heartRate', rider },
+    );
+    beatFor(sim, 30, 150); // la oleada
+    beatFor(sim, 10, 155); // el pulso óptico sigue subiendo unos segundos: el pico es 155
+    beatFor(sim, 50, 120); // al minuto está en 120
+    const events = beatFor(sim, 65, 120);
+    const finished = events.find((e) => e.type === 'finished');
+    if (finished?.type !== 'finished') throw new Error('unreachable');
+    expect(finished.summary.recoveryDrops).toEqual([35]);
+  });
+
+  it('no mide la recuperación si la pulsera calla o si otra oleada llega antes del minuto', () => {
+    const program = (recoverSec: number) => ({
+      id: 't',
+      name: 't',
+      target: 't',
+      segments: [
+        { kind: 'surge' as const, durationSec: 30, zone: [0, 5] as const, zombieSpeedKph: 1 },
+        { kind: 'recover' as const, durationSec: recoverSec, zone: [0, 5] as const, zombieSpeedKph: 1 },
+        { kind: 'surge' as const, durationSec: 30, zone: [0, 5] as const, zombieSpeedKph: 1 },
+      ],
+    });
+    const muted = new RideSim(program(120), cfg({ initialGapM: 100 }), now, { inputMode: 'heartRate', rider });
+    beatFor(muted, 30, 150);
+    silenceFor(muted, 70); // dropout justo en la ventana de medición
+    beatFor(muted, 90, 120);
+    expect(muted.summary().recoveryDrops).toEqual([]);
+
+    const tooSoon = new RideSim(program(40), cfg({ initialGapM: 100 }), now, { inputMode: 'heartRate', rider });
+    beatFor(tooSoon, 30, 150);
+    beatFor(tooSoon, 80, 120); // la siguiente oleada llega a los 40 s: no hay minuto
+    expect(tooSoon.summary().recoveryDrops).toEqual([]);
+  });
+
   it('summary() a mitad de sesión describe lo pedaleado hasta ahora', () => {
     const sim = make(steady(600, 1));
     beatFor(sim, 20, 125);

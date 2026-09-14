@@ -14,6 +14,7 @@ const summary: RideSummary = {
   zoneSec: [300, 200, 400, 300, 60, 0],
   inZoneSec: 900,
   aboveZoneSec: 60,
+  recoveryDrops: [18, 21],
 };
 
 describe('toSessionRecord', () => {
@@ -31,6 +32,7 @@ describe('toSessionRecord', () => {
     expect(record.programName).toBe('Oleadas');
     expect(record.distanceM).toBe(8200);
     expect(record.zoneSec).toEqual([300, 200, 400, 300, 60, 0]);
+    expect(record.recoveryDrops).toEqual([18, 21]);
     expect(record.hrRestBpm).toBe(58);
     expect(record.completed).toBe(true);
   });

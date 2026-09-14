@@ -81,6 +81,12 @@ export interface RideSummary {
   inZoneSec: number;
   /** Segundos por encima del techo del tramo (ventaja congelada). */
   aboveZoneSec: number;
+  /**
+   * Recuperación cardíaca: cuánto bajó el pulso (bpm) en el minuto siguiente
+   * a cada oleada. Sube con el entrenamiento; es el indicador de forma más
+   * honesto que da un pulsómetro solo.
+   */
+  recoveryDrops: readonly number[];
 }
 
 export type SimEvent =

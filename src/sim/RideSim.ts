@@ -65,6 +65,9 @@ export class RideSim {
   private inZoneSec = 0; // dentro de la zona prescrita por el tramo
   private aboveZoneSec = 0; // por encima del techo del tramo
   private aboveZone = false;
+  /** Medición en curso de la recuperación tras una oleada. */
+  private recovery: { endSec: number; peakBpm: number } | undefined;
+  private readonly recoveryDrops: number[] = [];
   private peakEmaBpm = 0; // pulso con ventana lenta: un pico de un segundo no cuenta
   private peakBpm = 0;
   private lastSegmentIndex = -1;
@@ -177,10 +180,19 @@ export class RideSim {
 
     const segIdx = segmentIndexAt(this.segments, this.elapsedSec);
     if (segIdx !== this.lastSegmentIndex) {
+      const prev = this.segments[this.lastSegmentIndex];
       this.lastSegmentIndex = segIdx;
       const segment = this.segments[segIdx];
       if (segment) events.push({ type: 'segmentChanged', index: segIdx, segment });
+      // Al salir de una oleada empieza la medición de la recuperación; otra
+      // oleada antes del minuto la cancela.
+      if (segment?.kind === 'surge') {
+        this.recovery = undefined;
+      } else if (prev?.kind === 'surge' && this.smoothedBpm > 0) {
+        this.recovery = { endSec: this.elapsedSec, peakBpm: this.smoothedBpm };
+      }
     }
+    this.measureRecovery();
 
     // Aviso de oleada: una sola vez, cuando falte <= surgeWarningSec para un
     // segmento más rápido que el actual.
@@ -202,6 +214,26 @@ export class RideSim {
     }
 
     return events;
+  }
+
+  /**
+   * Recuperación cardíaca: el pico se busca durante los primeros segundos
+   * tras la oleada (el pulso óptico llega tarde), y la caída se mide al
+   * minuto. Solo con lectura fresca en ambos momentos.
+   */
+  private measureRecovery(): void {
+    const r = this.recovery;
+    if (!r) return;
+    const since = this.elapsedSec - r.endSec;
+    const stale = this.hrSampleAgeSec > this.cfg.staleHeartRateSec;
+    if (since <= this.cfg.recoveryPeakWindowSec) {
+      if (!stale) r.peakBpm = Math.max(r.peakBpm, this.smoothedBpm);
+      return;
+    }
+    if (since >= this.cfg.recoveryWindowSec) {
+      if (!stale && this.smoothedBpm > 0) this.recoveryDrops.push(Math.round(r.peakBpm - this.smoothedBpm));
+      this.recovery = undefined;
+    }
   }
 
   /**
@@ -324,6 +356,7 @@ export class RideSim {
       zoneSec: [...this.zoneSec],
       inZoneSec: this.inZoneSec,
       aboveZoneSec: this.aboveZoneSec,
+      recoveryDrops: [...this.recoveryDrops],
     };
   }
 }

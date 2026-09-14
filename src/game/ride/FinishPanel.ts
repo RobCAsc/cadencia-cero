@@ -108,13 +108,21 @@ export class FinishPanel {
       rows.push(['Pulso medio', `${Math.round(s.avgHeartRateBpm)} bpm`]);
       rows.push(['Pico sostenido', `${Math.round(s.peakHeartRateBpm)} bpm`]);
       rows.push(['Cardio (Z2+)', `${Math.round(activeSec(s.zoneSec) / 60)} min`]);
+      if (s.durationSec > 0) {
+        rows.push(['Precisión de zona', `${Math.round((s.inZoneSec / s.durationSec) * 100)} %`]);
+      }
+      if (s.recoveryDrops.length > 0) {
+        const drop = s.recoveryDrops.reduce((a, b) => a + b, 0) / s.recoveryDrops.length;
+        rows.push(['Recuperación en 1 min', `${Math.round(drop)} lpm`]);
+      }
     } else {
       rows.push(['Cadencia media', `${Math.round(s.avgCadenceRpm)} rpm`]);
     }
+    const pitch = rows.length > 6 ? 32 : 40;
     for (const [label, value] of rows) {
       text(LEFT_X, y, label, 18, UI.textMuted);
       text(LEFT_X + 380, y - 4, value, 26, UI.textBright).setOrigin(1, 0);
-      y += 40;
+      y += pitch;
     }
 
     // ---- derecha: minutos por zona ----
@@ -138,7 +146,7 @@ export class FinishPanel {
     text(RIGHT_X, PANEL_Y + 156 + 5 * 34 + 2, `suave (bajo Z1): ${Math.round(easy / 60)} min`, 14, UI.textDim);
 
     // ---- abajo: semana, Ruta, récords ----
-    y = PANEL_Y + 372;
+    y = Math.max(y + 12, PANEL_Y + 372);
     const week = summarizeWeek(opts.history, weekStartMs(nowMs));
     const streak = streakWeeks(opts.history, nowMs);
     const weekLine =

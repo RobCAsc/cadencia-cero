@@ -27,6 +27,7 @@ const summary = (over: Partial<RideSummary> = {}): RideSummary => ({
   zoneSec: [0, 0, 1200, 0, 0, 0],
   inZoneSec: 1200,
   aboveZoneSec: 0,
+  recoveryDrops: [],
   ...over,
 });
 
