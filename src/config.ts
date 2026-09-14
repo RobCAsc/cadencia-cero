@@ -53,6 +53,11 @@ export const ZONES = {
   lowerBounds: [0.5, 0.6, 0.7, 0.8, 0.9],
   /** Primera zona que cuenta como minutos de cardio. */
   activeFromZone: 2,
+  /**
+   * Piso de la zona 0 ("suave") cuando un tramo la prescribe: la horda no
+   * puede ir a cero, así que un tramo suave la pone a este esfuerzo (~7 km/h).
+   */
+  easyFloorEffort: 0.35,
 } as const;
 
 /**
@@ -131,7 +136,9 @@ export const SIM: SimConfig = {
   heartRateSmoothingSec: 2,
   heartRatePeakWindowSec: 5,
   maxDtSec: 0.25,
-  initialGapM: 50,
+  // Colchón de salida: el pulso tarda uno o dos minutos en subir desde el
+  // reposo, y en ese rato el rider es más lento que la horda del calentamiento.
+  initialGapM: 100,
   gapMaxM: 150,
   zombieRampSec: 2,
   startResistance: 2,

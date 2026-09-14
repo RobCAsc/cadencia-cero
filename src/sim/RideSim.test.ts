@@ -29,7 +29,7 @@ const prog = (segments: TrainingProgram['segments']): TrainingProgram => ({
 });
 
 const steady = (durationSec: number, kph: number): TrainingProgram =>
-  prog([{ kind: 'steady', durationSec, zombieSpeedKph: kph }]);
+  prog([{ kind: 'steady', durationSec, zone: [0, 5], zombieSpeedKph: kph }]);
 
 let clockMs = 0;
 const now = () => clockMs;
@@ -65,7 +65,7 @@ describe('RideSim: la integral del gap', () => {
   it('integra gap y distancia con velocidad constante', () => {
     const sim = new RideSim(steady(1000, 14), cfg(), now, CADENCE);
     pedalFor(sim, 10, 20); // 20 rpm → 20 km/h vs horda a 14
-    expect(sim.state.gapM).toBeCloseTo(50 + ((20 - 14) / 3.6) * 10, 1);
+    expect(sim.state.gapM).toBeCloseTo(SIM.initialGapM + ((20 - 14) / 3.6) * 10, 1);
     expect(sim.state.distanceM).toBeCloseTo((20 / 3.6) * 10, 1);
     expect(sim.state.timesCaught).toBe(0);
   });
@@ -188,8 +188,8 @@ describe('RideSim: segmentos y fin de sesión', () => {
   it('emite segmentChanged al entrar a cada segmento (incluido el primero)', () => {
     const sim = new RideSim(
       prog([
-        { kind: 'steady', durationSec: 2, zombieSpeedKph: 10 },
-        { kind: 'steady', durationSec: 3, zombieSpeedKph: 12 },
+        { kind: 'steady', durationSec: 2, zone: [0, 5], zombieSpeedKph: 10 },
+        { kind: 'steady', durationSec: 3, zone: [0, 5], zombieSpeedKph: 12 },
       ]),
       cfg(),
       now,
@@ -204,8 +204,8 @@ describe('RideSim: segmentos y fin de sesión', () => {
   it('avisa la oleada una sola vez, surgeWarningSec antes', () => {
     const sim = new RideSim(
       prog([
-        { kind: 'steady', durationSec: 10, zombieSpeedKph: 10 },
-        { kind: 'surge', durationSec: 10, zombieSpeedKph: 30 },
+        { kind: 'steady', durationSec: 10, zone: [0, 5], zombieSpeedKph: 10 },
+        { kind: 'surge', durationSec: 10, zone: [0, 5], zombieSpeedKph: 30 },
       ]),
       cfg({ zombieRampSec: 0 }),
       now,
@@ -224,8 +224,8 @@ describe('RideSim: segmentos y fin de sesión', () => {
   it('completar el programa es la única forma de terminar', () => {
     const sim = new RideSim(
       prog([
-        { kind: 'steady', durationSec: 2, zombieSpeedKph: 10 },
-        { kind: 'cooldown', durationSec: 3, zombieSpeedKph: 8 },
+        { kind: 'steady', durationSec: 2, zone: [0, 5], zombieSpeedKph: 10 },
+        { kind: 'cooldown', durationSec: 3, zone: [0, 5], zombieSpeedKph: 8 },
       ]),
       cfg(),
       now,

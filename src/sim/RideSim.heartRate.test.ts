@@ -20,7 +20,7 @@ const steady = (durationSec: number, kph: number): TrainingProgram => ({
   id: 'test',
   name: 'test',
   target: 'test',
-  segments: [{ kind: 'steady', durationSec, zombieSpeedKph: kph }],
+  segments: [{ kind: 'steady', durationSec, zone: [0, 5], zombieSpeedKph: kph }],
 });
 
 let clockMs = 0;
@@ -182,8 +182,8 @@ describe('RideSim en modo pulso', () => {
         name: 't',
         target: 't',
         segments: [
-          { kind: 'recover', durationSec: 30, zombieSpeedKph: 50 },
-          { kind: 'surge', durationSec: 30, zombieSpeedKph: 50 },
+          { kind: 'recover', durationSec: 30, zone: [0, 5], zombieSpeedKph: 50 },
+          { kind: 'surge', durationSec: 30, zone: [0, 5], zombieSpeedKph: 50 },
         ],
       },
       cfg({ initialGapM: 1, zombieRampSec: 0 }),
@@ -220,6 +220,62 @@ describe('RideSim en modo pulso', () => {
     expect(zones[2]).toBeCloseTo(10, 0);
     expect(zones[4]).toBeCloseTo(10, 0);
     expect(zones.reduce((a, b) => a + b, 0)).toBeCloseTo(30, 0);
+  });
+
+  it('techo de zona: por encima de la zona prescrita la ventaja no crece; por debajo del piso se pierde', () => {
+    // Tramo en Z1 (50-60 %) con horda a 52 km/h: a 55 % (115 bpm) ganas poco,
+    // a 65 % (125 bpm) estás por encima y la ventaja se congela, a 45 % pierdes.
+    const sim = new RideSim(
+      {
+        id: 't',
+        name: 't',
+        target: 't',
+        segments: [{ kind: 'recover', durationSec: 600, zone: 1, zombieSpeedKph: 52 }],
+      },
+      cfg({ initialGapM: 50 }),
+      now,
+      { inputMode: 'heartRate', rider },
+    );
+    beatFor(sim, 10, 115);
+    const gained = sim.state.gapM;
+    expect(gained).toBeCloseTo(50 + ((55 - 52) / 3.6) * 10, 0);
+    expect(sim.state.aboveZone).toBe(false);
+
+    beatFor(sim, 10, 125);
+    expect(sim.state.aboveZone).toBe(true);
+    expect(sim.state.gapM).toBeCloseTo(gained, 5);
+
+    beatFor(sim, 10, 105);
+    expect(sim.state.aboveZone).toBe(false);
+    expect(sim.state.gapM).toBeCloseTo(gained - ((52 - 45) / 3.6) * 10, 0);
+
+    const partial = sim.summary();
+    expect(partial.inZoneSec).toBeCloseTo(10, 0);
+    expect(partial.aboveZoneSec).toBeCloseTo(10, 0);
+  });
+
+  it('Z5 no tiene techo y la zona suave tiene piso propio', () => {
+    const top = new RideSim(
+      { id: 't', name: 't', target: 't', segments: [{ kind: 'surge', durationSec: 60, zone: 5, zombieSpeedKph: 10 }] },
+      cfg({ initialGapM: 50 }),
+      now,
+      { inputMode: 'heartRate', rider },
+    );
+    beatFor(top, 10, 160); // 100 %
+    expect(top.state.aboveZone).toBe(false);
+    expect(top.state.gapM).toBeGreaterThan(50);
+
+    const easy = new RideSim(
+      { id: 't', name: 't', target: 't', segments: [{ kind: 'cooldown', durationSec: 60, zone: 0, zombieSpeedKph: 10 }] },
+      cfg({ initialGapM: 50 }),
+      now,
+      { inputMode: 'heartRate', rider },
+    );
+    beatFor(easy, 10, 100); // 40 %: dentro de "suave" (piso 35 %, techo Z1 50 %)
+    expect(easy.state.aboveZone).toBe(false);
+    expect(easy.summary().inZoneSec).toBeCloseTo(10, 0);
+    beatFor(easy, 10, 115); // 55 %: por encima
+    expect(easy.state.aboveZone).toBe(true);
   });
 
   it('summary() a mitad de sesión describe lo pedaleado hasta ahora', () => {

@@ -12,6 +12,8 @@ const summary: RideSummary = {
   peakHeartRateBpm: 171,
   avgEffortFrac: 0.62,
   zoneSec: [300, 200, 400, 300, 60, 0],
+  inZoneSec: 900,
+  aboveZoneSec: 60,
 };
 
 describe('toSessionRecord', () => {

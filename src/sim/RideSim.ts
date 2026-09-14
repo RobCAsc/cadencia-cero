@@ -10,7 +10,7 @@ import {
 } from './program';
 import { playerSpeedKph } from './speedTable';
 import type { CadenceSample, HeartRateSample, RideSummary, SimEvent, SimState } from './types';
-import { emptyZoneSec, zoneOf } from './zones';
+import { ceilingEffort, emptyZoneSec, floorEffort, zoneOf } from './zones';
 
 export interface RideSimOptions {
   /** Qué entrada mueve al ciclista. Por defecto el pulso, la entrada real del proyecto. */
@@ -62,6 +62,9 @@ export class RideSim {
   private heartRateBpmSec = 0; // ∫ bpm dt, para el pulso medio del resumen
   private effortFracSec = 0; // ∫ esfuerzo dt
   private readonly zoneSec = emptyZoneSec(); // segundos por zona cardíaca
+  private inZoneSec = 0; // dentro de la zona prescrita por el tramo
+  private aboveZoneSec = 0; // por encima del techo del tramo
+  private aboveZone = false;
   private peakEmaBpm = 0; // pulso con ventana lenta: un pico de un segundo no cuenta
   private peakBpm = 0;
   private lastSegmentIndex = -1;
@@ -126,12 +129,22 @@ export class RideSim {
     let zKph = zombieSpeedAt(this.segments, this.elapsedSec, this.cfg.zombieRampSec);
     if (this.caughtGraceSec > 0) zKph *= this.cfg.catch.stumbleSpeedFactor;
 
+    // Zona prescrita por el tramo: bajo el piso te alcanzan (la horda corre a
+    // esa velocidad); sobre el techo la ventaja se congela. Recuperar bien es
+    // entrenar, y pasarse en un tramo suave no debe rendir.
+    const curSeg = this.segments[segmentIndexAt(this.segments, this.elapsedSec)];
+    const above = curSeg !== undefined && this.effortFrac >= ceilingEffort(curSeg.zoneMax);
+    const inZone = curSeg !== undefined && !above && this.effortFrac >= floorEffort(curSeg.zoneMin);
+    this.aboveZone = above;
+
     // El juego entero es esta integral.
-    this.gapM = Math.max(0, Math.min(this.gapM + ((pKph - zKph) / 3.6) * dt, this.cfg.gapMaxM));
+    let nextGap = this.gapM + ((pKph - zKph) / 3.6) * dt;
+    if (above) nextGap = Math.min(nextGap, this.gapM);
+    this.gapM = Math.max(0, Math.min(nextGap, this.cfg.gapMaxM));
 
     if (this.gapM <= 0 && this.caughtGraceSec <= 0) {
       this.timesCaught += 1;
-      const kind = this.segments[segmentIndexAt(this.segments, this.elapsedSec)]?.kind;
+      const kind = curSeg?.kind;
       if (kind === 'warmup' || kind === 'recover' || kind === 'cooldown') this.timesCaughtInEasy += 1;
       this.healthPct = Math.max(0, this.healthPct - this.cfg.catch.healthCost);
       this.gapM = this.cfg.catch.knockbackGapM;
@@ -151,6 +164,8 @@ export class RideSim {
     this.effortFracSec += this.effortFrac * dt;
     const zone = zoneOf(this.effortFrac);
     this.zoneSec[zone] = (this.zoneSec[zone] ?? 0) + dt;
+    if (inZone) this.inZoneSec += dt;
+    if (above) this.aboveZoneSec += dt;
     this.effectiveRpm = rpm;
     this.lastPlayerKph = pKph;
     this.lastZombieKph = zKph;
@@ -257,6 +272,7 @@ export class RideSim {
       heartRateBpm: this.smoothedBpm,
       heartRateStale: this.hrSampleAgeSec > this.cfg.staleHeartRateSec,
       effortFrac: this.effortFrac,
+      aboveZone: this.aboveZone,
       playerSpeedKph: this.lastPlayerKph,
       zombieSpeedKph: this.lastZombieKph,
       resistanceLevel: this.resistanceLevel,
@@ -267,11 +283,19 @@ export class RideSim {
         index: idx,
         kind: seg.kind,
         zombieSpeedKph: seg.zombieSpeedKph,
+        zoneMin: seg.zoneMin,
+        zoneMax: seg.zoneMax,
         remainingSec,
         waveNumber: seg.waveNumber,
         waveTotal: seg.waveTotal,
         next: next
-          ? { kind: next.kind, zombieSpeedKph: next.zombieSpeedKph, inSec: remainingSec }
+          ? {
+              kind: next.kind,
+              zombieSpeedKph: next.zombieSpeedKph,
+              zoneMin: next.zoneMin,
+              zoneMax: next.zoneMax,
+              inSec: remainingSec,
+            }
           : undefined,
       },
     };
@@ -293,6 +317,8 @@ export class RideSim {
       peakHeartRateBpm: this.peakBpm,
       avgEffortFrac: t > 0 ? this.effortFracSec / t : 0,
       zoneSec: [...this.zoneSec],
+      inZoneSec: this.inZoneSec,
+      aboveZoneSec: this.aboveZoneSec,
     };
   }
 }

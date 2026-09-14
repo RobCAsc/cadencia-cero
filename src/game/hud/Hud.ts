@@ -1,9 +1,8 @@
 import Phaser from 'phaser';
 import { RENDER, SIM } from '../../config';
-import { effortForSpeed } from '../../sim/effortTable';
 import type { ExpandedSegment } from '../../sim/program';
 import type { SimState } from '../../sim/types';
-import { zoneOf } from '../../sim/zones';
+import { zoneLabel, zoneOf } from '../../sim/zones';
 import { formatMMSS } from '../format';
 import { FONT_MONO, FONT_SANS, KIND_COLOR, UI, ZONE_COLOR } from '../theme';
 import { makeTextButton, type TapButton } from '../uiButton';
@@ -41,6 +40,7 @@ export interface HudOptions {
  */
 export class Hud {
   private readonly gapText: Phaser.GameObjects.Text;
+  private readonly gapLabel: Phaser.GameObjects.Text;
   private readonly hordeSpeedText: Phaser.GameObjects.Text;
   private readonly cadenceText: Phaser.GameObjects.Text;
   private readonly statsText: Phaser.GameObjects.Text;
@@ -71,7 +71,7 @@ export class Hud {
       .text(cx, 18, '', { fontFamily: FONT_MONO, fontSize: '84px', fontStyle: 'bold', color: UI.good })
       .setOrigin(0.5, 0)
       .setDepth(10);
-    scene.add
+    this.gapLabel = scene.add
       .text(cx, 112, 'de ventaja', { fontFamily: FONT_SANS, fontSize: '20px', color: UI.textMuted })
       .setOrigin(0.5, 0)
       .setDepth(10);
@@ -136,6 +136,9 @@ export class Hud {
         ? 1 + 0.06 * Math.abs(Math.sin((this.scene.time.now / 1000) * Math.PI * 1.6))
         : 1;
     this.gapText.setScale(pulse);
+    // Por encima del techo de zona la ventaja está congelada, y se dice.
+    this.gapLabel.setText(state.aboveZone ? 'ventaja congelada' : 'de ventaja');
+    this.gapLabel.setColor(state.aboveZone ? UI.warn : UI.textMuted);
     this.hordeSpeedText.setText(`horda a ${state.zombieSpeedKph.toFixed(0)} km/h`);
 
     const heartRate = state.inputMode === 'heartRate' || state.heartRateBpm > 0;
@@ -163,7 +166,7 @@ export class Hud {
         ? `Oleada ${seg.waveNumber}/${seg.waveTotal}`
         : (KIND_ES[seg.kind] ?? seg.kind);
     const nextLine = seg.next
-      ? `Sigue: ${KIND_ES[seg.next.kind] ?? seg.next.kind} a ${seg.next.zombieSpeedKph} km/h`
+      ? `Sigue: ${KIND_ES[seg.next.kind] ?? seg.next.kind} · ${zoneLabel(seg.next.zoneMin, seg.next.zoneMax)}`
       : 'Último tramo';
     this.rightText.setText(
       `${formatMMSS(state.elapsedSec)} / ${formatMMSS(state.totalSec)}\n${segName} · ${formatMMSS(seg.remainingSec)}\n${nextLine}`,
@@ -201,18 +204,21 @@ export class Hud {
       return;
     }
     const zone = zoneOf(state.effortFrac);
-    // Zona objetivo: la que sostiene el paso nominal del tramo, con un pelín de margen.
-    const target = Math.max(1, Math.min(5, zoneOf(effortForSpeed(state.segment.zombieSpeedKph) + 0.04)));
+    // La zona prescrita por el tramo viene del programa: se enmarca entera.
+    const { zoneMin, zoneMax } = state.segment;
     const segW = (ZONE_W - ZONE_GAP * 4) / 5;
     for (let z = 1; z <= 5; z++) {
       const x = ZONE_X + (z - 1) * (segW + ZONE_GAP);
       const color = ZONE_COLOR[z] ?? 0xffffff;
       g.fillStyle(color, z === zone ? 1 : 0.28);
       g.fillRect(x, ZONE_Y, segW, ZONE_H);
-      if (z === target) {
-        g.lineStyle(2, 0xffffff, 0.9);
-        g.strokeRect(x - 1, ZONE_Y - 1, segW + 2, ZONE_H + 2);
-      }
+    }
+    if (zoneMax >= 1) {
+      const from = Math.max(1, zoneMin);
+      const x0 = ZONE_X + (from - 1) * (segW + ZONE_GAP);
+      const x1 = ZONE_X + (zoneMax - 1) * (segW + ZONE_GAP) + segW;
+      g.lineStyle(2, 0xffffff, 0.9);
+      g.strokeRect(x0 - 1, ZONE_Y - 1, x1 - x0 + 2, ZONE_H + 2);
     }
     // Marcador del esfuerzo actual: un triángulo bajo la barra, entre el 50 y el 100 %.
     if (state.heartRateBpm > 0) {
@@ -222,9 +228,21 @@ export class Hud {
       g.fillTriangle(mx - 6, ZONE_Y + ZONE_H + 7, mx + 6, ZONE_Y + ZONE_H + 7, mx, ZONE_Y + ZONE_H + 1);
     }
     const mine = zone === 0 ? 'suave' : `Z${zone}`;
-    const verdict = zone === 0 && state.heartRateBpm <= 0 ? '' : zone < target ? ' · sube' : zone > target ? ' · afloja' : ' · bien';
-    this.zoneCaption.setText(`Vas en ${mine} · el tramo pide Z${target}${verdict}`);
-    this.zoneCaption.setColor(zone === target ? UI.good : zone > target ? UI.warn : UI.textMuted);
+    let verdict = '';
+    let color: string = UI.textMuted;
+    if (state.heartRateBpm > 0) {
+      if (state.aboveZone) {
+        verdict = ' · afloja';
+        color = UI.warn;
+      } else if (zone < zoneMin) {
+        verdict = ' · sube';
+      } else {
+        verdict = ' · bien';
+        color = UI.good;
+      }
+    }
+    this.zoneCaption.setText(`Vas en ${mine} · el tramo pide ${zoneLabel(zoneMin, zoneMax)}${verdict}`);
+    this.zoneCaption.setColor(color);
     this.zoneCaption.setY(ZONE_Y + ZONE_H + 12);
   }
 

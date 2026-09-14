@@ -27,6 +27,10 @@ export interface SessionRecord {
   avgEffortFrac: number;
   /** Segundos por zona: índice 0 = suave, 1..5 = Z1..Z5. */
   zoneSec: number[];
+  /** Segundos dentro de la zona prescrita (opcional: los registros viejos no lo traen). */
+  inZoneSec?: number;
+  /** Segundos por encima del techo del tramo. */
+  aboveZoneSec?: number;
   /** Reposo del perfil ese día: su tendencia es el indicador de salud más honesto. */
   hrRestBpm: number;
 }
@@ -59,6 +63,8 @@ export function toSessionRecord(input: SessionInput): SessionRecord {
     peakHeartRateBpm: s.peakHeartRateBpm,
     avgEffortFrac: s.avgEffortFrac,
     zoneSec: [...s.zoneSec],
+    inZoneSec: s.inZoneSec,
+    aboveZoneSec: s.aboveZoneSec,
     hrRestBpm: input.hrRestBpm,
   };
 }
