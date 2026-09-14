@@ -68,23 +68,33 @@ Structure the input layer behind an interface with two implementations — a rea
 
 A program is the zombie's speed profile over time. This is the central design idea: **the workout prescription and the antagonist's behaviour are the same object.** A recovery ride is a slow, distant, steady pursuer. An interval session is a horde that surges every ninety seconds. A threshold session is one runner sustaining pressure for twenty minutes.
 
-Programs are JSON, loaded from static files, roughly:
+Since 2026-09-13 a segment prescribes a **heart-rate zone** (a single zone or an inclusive range; 0 is "easy", below Z1), and the horde's speed is derived from it. Programs are TypeScript objects with the shape of this JSON:
 
 ```json
 {
-  "id": "hiit-30-30",
+  "id": "oleadas",
   "name": "Oleadas",
   "target": "anaerobic",
   "segments": [
-    { "kind": "warmup", "durationSec": 300, "zombieSpeedKph": 14, "cueResistance": 2 },
-    { "kind": "surge", "durationSec": 30, "zombieSpeedKph": 32 },
-    { "kind": "recover", "durationSec": 90, "zombieSpeedKph": 12 },
-    { "kind": "repeat", "times": 8, "fromIndex": 1 }
+    { "kind": "warmup", "durationSec": 300, "zone": [0, 2], "cueResistance": 2 },
+    { "kind": "surge", "durationSec": 60, "zone": [4, 5] },
+    { "kind": "recover", "durationSec": 120, "zone": [1, 2] },
+    { "kind": "repeat", "times": 6, "fromIndex": 1 }
   ]
 }
 ```
 
-When a heart rate strap is connected, a segment may instead specify a target HR zone, and zombie speed becomes closed-loop: it accelerates while the rider is below zone and eases off above it. This auto-calibrates across fitness levels and resistance-knob positions, which is the honest answer to "support different training purposes and speeds" on a bike that cannot report effort.
+The zone has a **floor and a ceiling**. The horde runs at the speed the floor of the zone sustains (via the effort table), so dropping below the zone means being caught. Above the ceiling the gap stops growing: recovering properly is part of the prescription, and overdoing an easy segment must not pay. `zombieSpeedKph` may still be given explicitly (tests do), but the catalogue never does. Closed-loop horde speed (the horde adapting to the rider's zone) was considered and deferred: the effort table already closes the loop through the rider's pulse, and the floor/ceiling rule does the rest.
+
+## Pulse-only design
+
+The only sensor is a wrist heart-rate band, and a wrist optical sensor lags effort by 10 to 30 seconds. Everything below follows from that, and `src/sim/programs/catalog.pulse.test.ts` guards it: a model rider with a lagged pulse (τ 20 s up, 35 s down) who follows the prescribed zone is never caught by any catalogue program, and a rider who sits in Z2 through the surges is. If a tunable changes, that test says whether the game still enforces the workout.
+
+- **Hard efforts last 60 seconds or more.** A 30-second sprint cannot be judged by a sensor that reacts in 20. The horde accelerates over a 12-second ramp (`zombieRampUpSec`) and the warning comes 15 seconds early (`surgeWarningSec`): the rider pushes before the horde arrives, and the horde arrives at the pace the heart does.
+- **The gap cap is 100 m** (`gapMaxM`). With 150 m, skipping every surge and recovering "well" refilled the buffer each cycle and nobody was ever caught. The starting gap is also 100 m: the pulse takes a minute or two to rise from rest.
+- **The plan has phases** (`recommendToday`): arranque (rides 1 to 5: short, Z1 to Z2, no surges), base (6 to 11: longer base rides and the first "Empujones", three times two minutes in Z3), rotación (12+: base → surges → recovery, with surges growing 4 → 6 → 8), and a descarga week after four completed weeks in a row. Volume grows about one minute per ride. Two hard days are never chained.
+- **The ritual**: one minute still on the bike before each ride, band on. It confirms the signal, measures the day's resting pulse, and when that reading sits 8 bpm or more above the median of the last readings it offers an easy ride instead. It can always be skipped.
+- **Improvement is measured with what a pulse can honestly give**: the pre-ride resting pulse (falls with fitness), heart-rate recovery in the minute after each surge (rises with fitness), and zone precision (share of the ride inside the prescribed zone). Each is shown against the previous window. No calories, watts, or VO2max estimates: the hardware cannot support them.
 
 ## Habit and progress
 
