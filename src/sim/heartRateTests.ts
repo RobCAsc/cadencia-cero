@@ -119,3 +119,80 @@ export class PaceTest {
     return this.tail.isFull() ? Math.round(this.tail.mean()) : undefined;
   }
 }
+
+export type StepStage = 'warm' | 'easy' | 'hard';
+
+export interface StepProgress extends TestProgress {
+  stage: StepStage;
+  stageRemainingSec: number;
+}
+
+export interface StepResult {
+  /** Media del final del escalón "hablas sin problema". */
+  easyBpm: number;
+  /** Media del final del escalón "no puedes hablar". */
+  hardBpm: number;
+}
+
+/**
+ * La escalera: tres escalones de dos minutos. Primero entrar en calor (no
+ * cuenta), luego un ritmo en el que hablas sin problema, luego uno en el que
+ * no puedes hablar. De cada escalón útil se toma la media de su cola, cuando
+ * el pulso ya alcanzó al esfuerzo. Dos anclas del habla, que es lo que la
+ * fisiología sí sabe leer sin potenciómetro.
+ */
+export class StepTest {
+  private readonly easyTail: SampleWindow;
+  private readonly hardTail: SampleWindow;
+  private startMs: number | undefined;
+  private lastBpm = 0;
+
+  constructor(
+    private readonly stageSec = 120,
+    easyTailSec = 60,
+    hardTailSec = 45,
+  ) {
+    this.easyTail = new SampleWindow(easyTailSec * 1000);
+    this.hardTail = new SampleWindow(hardTailSec * 1000);
+  }
+
+  get totalSec(): number {
+    return this.stageSec * 3;
+  }
+
+  stageAt(elapsedSec: number): StepStage {
+    if (elapsedSec < this.stageSec) return 'warm';
+    if (elapsedSec < this.stageSec * 2) return 'easy';
+    return 'hard';
+  }
+
+  push(sample: HeartRateSample): void {
+    if (this.startMs === undefined) this.startMs = sample.timestampMs;
+    this.lastBpm = sample.bpm;
+    const stage = this.stageAt((sample.timestampMs - this.startMs) / 1000);
+    if (stage === 'easy') this.easyTail.push(sample);
+    else if (stage === 'hard' && sample.timestampMs - this.startMs < this.totalSec * 1000) {
+      this.hardTail.push(sample);
+    }
+  }
+
+  progress(nowMs: number): StepProgress {
+    const elapsedSec = this.startMs === undefined ? 0 : (nowMs - this.startMs) / 1000;
+    const stage = this.stageAt(elapsedSec);
+    const stageIndex = stage === 'warm' ? 0 : stage === 'easy' ? 1 : 2;
+    return {
+      elapsedSec,
+      remainingSec: Math.max(0, this.totalSec - elapsedSec),
+      stage,
+      stageRemainingSec: Math.max(0, this.stageSec * (stageIndex + 1) - elapsedSec),
+      liveBpm: this.lastBpm,
+      done: elapsedSec >= this.totalSec,
+    };
+  }
+
+  /** undefined si algún escalón útil no tiene su cola completa (pulsera muda). */
+  result(): StepResult | undefined {
+    if (!this.easyTail.isFull() || !this.hardTail.isFull()) return undefined;
+    return { easyBpm: Math.round(this.easyTail.mean()), hardBpm: Math.round(this.hardTail.mean()) };
+  }
+}

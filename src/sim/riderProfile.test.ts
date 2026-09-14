@@ -12,6 +12,10 @@ import {
   withManualMax,
   withObservedPeak,
   withRest,
+  hrMaxFromStepTest,
+  MAX_AGE_TOLERANCE_BPM,
+  withRitualRest,
+  withStepTest,
 } from './riderProfile';
 import type { RideSummary } from './types';
 
@@ -86,6 +90,37 @@ describe('perfil del rider', () => {
     expect(toSimRider(withIntensity(defaultRiderProfile(), -10)).effortScale).toBeCloseTo(0.9);
     expect(toSimRider(defaultRiderProfile()).effortScale).toBe(1);
   });
+
+  it('la escalera ajusta el máximo con dos anclas, ponderando la de arriba', () => {
+    // Reposo 60: cómodo 141 (65 % de 185) y fuerte 166 (85 %) → 185 exacto.
+    expect(hrMaxFromStepTest(33, 60, 141.25, 166.25)).toBe(185);
+    // Cómodo alto y fuerte bajo se compensan; el fuerte pesa más.
+    expect(hrMaxFromStepTest(33, 60, 150, 160)).toBe(Math.round(0.4 * (60 + 90 / 0.65) + 0.6 * (60 + 100 / 0.85)));
+    const p = withStepTest(defaultRiderProfile(33), 135, 162);
+    expect(p).toMatchObject({ anchorBpm: 135, hardBpm: 162, hrMaxSource: 'step' });
+    expect(p.hrMaxBpm).toBe(hrMaxFromStepTest(33, 60, 135, 162));
+  });
+
+  it('la escalera se acota a la edad ± 15: un día flojo no descalibra todo', () => {
+    expect(hrMaxFromStepTest(33, 60, 110, 125)).toBe(185 - MAX_AGE_TOLERANCE_BPM); // saldría ~140
+    expect(hrMaxFromStepTest(33, 60, 170, 190)).toBe(185 + MAX_AGE_TOLERANCE_BPM); // saldría ~225
+  });
+
+  it('un pico observado mayor sigue mandando sobre la escalera', () => {
+    const observed = withObservedPeak(defaultRiderProfile(33), 192).profile;
+    const p = withStepTest(observed, 130, 150);
+    expect(p.hrMaxBpm).toBe(192);
+    expect(p.hrMaxSource).toBe('observed');
+  });
+
+  it('el reposo del minuto de calma manda salvo que esté fijado a mano, y recalcula la escalera', () => {
+    const stepped = withStepTest(defaultRiderProfile(33), 135, 162);
+    const ritual = withRitualRest(stepped, 54);
+    expect(ritual).toMatchObject({ hrRestBpm: 54, hrRestSource: 'ritual' });
+    expect(ritual.hrMaxBpm).toBe(hrMaxFromStepTest(33, 54, 135, 162));
+    const manual = withRest(stepped, 58); // a mano
+    expect(withRitualRest(manual, 50)).toMatchObject({ hrRestBpm: 58, hrRestSource: 'manual' });
+  });
 });
 
 describe('consejo de calibración', () => {
@@ -102,5 +137,11 @@ describe('consejo de calibración', () => {
   it('una sesión normal no toca nada', () => {
     expect(calibrationAdvice(summary({ timesCaught: 2, timesCaughtInEasy: 1 }))).toBe('ok');
     expect(calibrationAdvice(summary())).toBe('ok');
+  });
+
+  it('media salida por encima del techo sin capturas → subir, aunque el esfuerzo medio sea alto', () => {
+    expect(calibrationAdvice(summary({ avgEffortFrac: 0.7, aboveZoneSec: 700, durationSec: 1200 }))).toBe('raise');
+    expect(calibrationAdvice(summary({ avgEffortFrac: 0.7, aboveZoneSec: 500, durationSec: 1200 }))).toBe('ok');
+    expect(calibrationAdvice(summary({ timesCaught: 1, aboveZoneSec: 900, durationSec: 1200 }))).toBe('ok');
   });
 });

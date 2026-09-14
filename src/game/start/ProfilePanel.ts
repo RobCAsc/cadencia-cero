@@ -3,16 +3,16 @@ import { RENDER } from '../../config';
 import type { BandConnection } from '../../input/BandConnection';
 import type { BleStatus } from '../../input/BleHeartRateSource';
 import type { HeartRateSource } from '../../input/HeartRateSource';
-import { PaceTest, RestTest, type TestProgress } from '../../sim/heartRateTests';
+import { StepTest, type StepProgress } from '../../sim/heartRateTests';
 import {
   INTENSITY_MAX,
   INTENSITY_MIN,
   toSimRider,
   withAge,
-  withAnchor,
   withIntensity,
   withManualMax,
   withRest,
+  withStepTest,
   type StoredRiderProfile,
 } from '../../sim/riderProfile';
 import { saveRiderProfile } from '../../storage/riderStore';
@@ -21,15 +21,15 @@ import { FONT_MONO, FONT_SANS, UI } from '../theme';
 import { makeTapButton, makeTextButton } from '../uiButton';
 
 const DEPTH = 50;
-const PANEL_W = 860;
-const PANEL_H = 600;
-const LABEL_X = 250;
-const VALUE_X = 640;
-const MINUS_X = 560;
-const PLUS_X = 720;
+const PANEL_W = 900;
+const PANEL_H = 620;
+const LABEL_X = 230;
+const VALUE_X = 620;
+const MINUS_X = 540;
+const PLUS_X = 700;
 const ACTION_X = 930;
-const ROW0_Y = 178;
-const ROW_H = 64;
+const ROW0_Y = 168;
+const ROW_H = 62;
 
 const STATUS_ES: Record<BleStatus, string> = {
   idle: 'sin conectar',
@@ -44,19 +44,31 @@ const STATUS_ES: Record<BleStatus, string> = {
 
 const MAX_SOURCE_ES: Record<StoredRiderProfile['hrMaxSource'], string> = {
   age: 'estimado por edad',
+  step: 'de la escalera',
   anchor: 'derivado del ritmo cómodo',
   observed: 'pico observado en sesión',
   manual: 'ajustado a mano',
 };
 
-type ActiveTest =
-  | { kind: 'rest'; test: RestTest }
-  | { kind: 'pace'; test: PaceTest };
+const REST_SOURCE_ES: Record<NonNullable<StoredRiderProfile['hrRestSource']>, string> = {
+  default: 'por defecto: mídelo con el minuto de calma',
+  ritual: 'del minuto de calma',
+  manual: 'ajustado a mano',
+  measured: 'medido',
+};
+
+const STAGE_ES = {
+  warm: ['Escalón 1 de 3 · entrar en calor', 'Pedalea suave. Este escalón no cuenta, solo calienta.'],
+  easy: ['Escalón 2 de 3 · cómodo', 'Un ritmo en el que hablas sin problema, frases enteras.'],
+  hard: ['Escalón 3 de 3 · fuerte', 'Un ritmo en el que ya no puedes hablar. Aguanta los dos minutos.'],
+} as const;
 
 /**
  * Overlay de perfil y pulsera sobre la pantalla de inicio. Todo lo que cambia
  * el perfil pasa por setProfile(): persiste, publica al registry y redibuja.
- * Sin Container a propósito: el hit-test de Phaser no ve botones re-parentados.
+ * El reposo llega solo del minuto de calma; el máximo, de la escalera (dos
+ * anclas del habla) y de los picos observados. Sin Container a propósito: el
+ * hit-test de Phaser no ve botones re-parentados.
  */
 export class ProfilePanel {
   private readonly objects: Phaser.GameObjects.GameObject[] = [];
@@ -67,15 +79,15 @@ export class ProfilePanel {
   private bandButton!: ReturnType<typeof makeTextButton>;
   private ageText!: Phaser.GameObjects.Text;
   private restText!: Phaser.GameObjects.Text;
-  private restButton!: ReturnType<typeof makeTextButton>;
+  private restSourceText!: Phaser.GameObjects.Text;
   private maxText!: Phaser.GameObjects.Text;
   private maxSourceText!: Phaser.GameObjects.Text;
-  private anchorText!: Phaser.GameObjects.Text;
-  private paceButton!: ReturnType<typeof makeTextButton>;
+  private stepText!: Phaser.GameObjects.Text;
+  private stepButton!: ReturnType<typeof makeTextButton>;
   private intensityText!: Phaser.GameObjects.Text;
   private testText!: Phaser.GameObjects.Text;
 
-  private active: ActiveTest | undefined;
+  private active: StepTest | undefined;
   private unsubscribeSamples: (() => void) | undefined;
   private unsubscribeStatus: (() => void) | undefined;
   private ticker: Phaser.Time.TimerEvent | undefined;
@@ -105,7 +117,7 @@ export class ProfilePanel {
       .setDepth(DEPTH)
       .setStrokeStyle(2, 0x3a4256);
     const title = this.scene.add
-      .text(cx, 96, 'Tu perfil y la pulsera', {
+      .text(cx, 90, 'Tu perfil y la pulsera', {
         fontFamily: FONT_SANS,
         fontSize: '32px',
         fontStyle: 'bold',
@@ -113,7 +125,15 @@ export class ProfilePanel {
       })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
-    this.objects.push(dim, panel, title);
+    const subtitle = this.scene.add
+      .text(cx, 124, 'El juego mide con lo que el pulso sí puede dar: reposo, máximo y lo que pasa en cada salida.', {
+        fontFamily: FONT_SANS,
+        fontSize: '15px',
+        color: UI.textDim,
+      })
+      .setOrigin(0.5)
+      .setDepth(DEPTH + 1);
+    this.objects.push(dim, panel, title, subtitle);
 
     // Fila 0: pulsera
     this.label(0, 'Pulsera');
@@ -125,26 +145,22 @@ export class ProfilePanel {
     this.ageText = this.value(1, '');
     this.stepper(1, (d) => this.setProfile(withAge(this.profile, this.profile.ageYears + d)));
 
-    // Fila 2: reposo
+    // Fila 2: reposo (llega solo del minuto de calma; el stepper es el ajuste a mano)
     this.label(2, 'Reposo');
     this.restText = this.value(2, '');
     this.stepper(2, (d) => this.setProfile(withRest(this.profile, this.profile.hrRestBpm + d)));
-    this.restButton = this.action(2, 'Medir 1 min', () => this.toggleTest('rest'));
+    this.restSourceText = this.note(2);
 
     // Fila 3: máximo
     this.label(3, 'Máximo');
     this.maxText = this.value(3, '');
     this.stepper(3, (d) => this.setProfile(withManualMax(this.profile, this.profile.hrMaxBpm + d)));
-    this.maxSourceText = this.scene.add
-      .text(ACTION_X - 100, this.rowY(3), '', { fontFamily: FONT_SANS, fontSize: '17px', color: UI.textDim })
-      .setOrigin(0, 0.5)
-      .setDepth(DEPTH + 1);
-    this.objects.push(this.maxSourceText);
+    this.maxSourceText = this.note(3);
 
-    // Fila 4: ritmo cómodo
-    this.label(4, 'Ritmo cómodo');
-    this.anchorText = this.value(4, '');
-    this.paceButton = this.action(4, 'Medir 5 min', () => this.toggleTest('pace'));
+    // Fila 4: escalera
+    this.label(4, 'Escalera');
+    this.stepText = this.value(4, '', UI.textBright, 22);
+    this.stepButton = this.action(4, 'Escalera 6 min', () => this.toggleTest());
 
     // Fila 5: intensidad
     this.label(5, 'Intensidad');
@@ -153,10 +169,10 @@ export class ProfilePanel {
 
     // Pie: estado de la prueba en curso y cerrar
     this.testText = this.scene.add
-      .text(cx, this.rowY(6) + 6, '', { fontFamily: FONT_SANS, fontSize: '20px', color: UI.info, align: 'center' })
+      .text(cx, this.rowY(6) + 10, '', { fontFamily: FONT_SANS, fontSize: '19px', color: UI.info, align: 'center' })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
-    const close = makeTextButton(this.scene, cx, RENDER.height - 82, 220, 56, 'Cerrar', () => this.close(), DEPTH + 1, 24);
+    const close = makeTextButton(this.scene, cx, RENDER.height - 76, 220, 56, 'Cerrar', () => this.close(), DEPTH + 1, 24);
     this.objects.push(this.testText, close.rect, close.label);
   }
 
@@ -176,6 +192,15 @@ export class ProfilePanel {
     const t = this.scene.add
       .text(VALUE_X, this.rowY(row), text, { fontFamily: FONT_MONO, fontSize: `${size}px`, color })
       .setOrigin(0.5)
+      .setDepth(DEPTH + 1);
+    this.objects.push(t);
+    return t;
+  }
+
+  private note(row: number): Phaser.GameObjects.Text {
+    const t = this.scene.add
+      .text(ACTION_X - 110, this.rowY(row), '', { fontFamily: FONT_SANS, fontSize: '16px', color: UI.textDim })
+      .setOrigin(0, 0.5)
       .setDepth(DEPTH + 1);
     this.objects.push(t);
     return t;
@@ -207,9 +232,16 @@ export class ProfilePanel {
     const p = this.profile;
     this.ageText.setText(`${p.ageYears} años`);
     this.restText.setText(`${p.hrRestBpm} bpm`);
+    this.restSourceText.setText(REST_SOURCE_ES[p.hrRestSource ?? 'default']);
     this.maxText.setText(`${p.hrMaxBpm} bpm`);
     this.maxSourceText.setText(MAX_SOURCE_ES[p.hrMaxSource]);
-    this.anchorText.setText(p.anchorBpm !== undefined ? `${p.anchorBpm} bpm` : '––');
+    this.stepText.setText(
+      p.anchorBpm !== undefined && p.hardBpm !== undefined
+        ? `cómodo ${p.anchorBpm} · fuerte ${p.hardBpm}`
+        : p.anchorBpm !== undefined
+          ? `cómodo ${p.anchorBpm} · fuerte ––`
+          : '––',
+    );
     const sign = p.intensityPct > 0 ? '+' : '';
     this.intensityText.setText(`${sign}${p.intensityPct} %`);
     this.intensityText.setColor(
@@ -241,65 +273,51 @@ export class ProfilePanel {
     await this.band.connect(); // desde el toque: gesto de usuario para el chooser
   }
 
-  // ---- pruebas rápidas ----------------------------------------------------
+  // ---- la escalera ---------------------------------------------------------
 
-  private toggleTest(kind: 'rest' | 'pace'): void {
+  private toggleTest(): void {
     if (this.active) {
-      const cancelling = this.active.kind === kind;
       this.stopTest();
-      if (cancelling) return;
+      return;
     }
     const source = this.scene.registry.get('heartRateSource') as HeartRateSource;
-    this.active = kind === 'rest' ? { kind, test: new RestTest() } : { kind, test: new PaceTest() };
-    this.unsubscribeSamples = source.onSample((s) => this.active?.test.push(s));
+    this.active = new StepTest();
+    this.unsubscribeSamples = source.onSample((s) => this.active?.push(s));
     this.ticker = this.scene.time.addEvent({ delay: 250, loop: true, callback: () => this.tick() });
-    this.renderTest(this.active.test.progress(performance.now()));
+    this.stepButton.label.setText('Cancelar');
+    this.renderTest(this.active.progress(performance.now()));
   }
 
   private tick(): void {
     if (!this.active) return;
-    const progress = this.active.test.progress(performance.now());
+    const progress = this.active.progress(performance.now());
     this.renderTest(progress);
     if (progress.done) this.finishTest();
   }
 
-  private renderTest(progress: TestProgress): void {
+  private renderTest(progress: StepProgress): void {
     if (!this.active) return;
-    const rest = this.active.kind === 'rest';
-    this.restButton.label.setText(this.active.kind === 'rest' ? 'Cancelar' : 'Medir 1 min');
-    this.paceButton.label.setText(this.active.kind === 'pace' ? 'Cancelar' : 'Medir 5 min');
+    const [stageTitle, hint] = STAGE_ES[progress.stage];
     const live = progress.liveBpm > 0 ? `♥ ${progress.liveBpm}` : 'esperando pulso…';
-    const hint = rest
-      ? 'Quieto sobre la bici, sin pedalear.'
-      : 'Pedalea a un ritmo que aguantarías media hora hablando.';
-    const waiting = progress.elapsedSec === 0;
-    this.testText.setText(
-      waiting
-        ? `${rest ? 'Reposo' : 'Ritmo cómodo'} · ${live}\n${hint}`
-        : `${rest ? 'Reposo' : 'Ritmo cómodo'} · quedan ${formatMMSS(progress.remainingSec)} · ${live}\n${hint}`,
-    );
-    this.testText.setColor(UI.info);
+    const clock = progress.elapsedSec === 0 ? '' : ` · quedan ${formatMMSS(progress.stageRemainingSec)}`;
+    this.testText.setText(`${stageTitle}${clock} · ${live}\n${hint}`);
+    this.testText.setColor(progress.stage === 'hard' ? UI.warn : UI.info);
   }
 
   private finishTest(): void {
     const active = this.active;
     if (!active) return;
-    const result = active.test.result();
+    const result = active.result();
     this.stopTest();
     if (result === undefined) {
-      this.testText.setText('No llegaron muestras suficientes de la pulsera. Repite la prueba.');
+      this.testText.setText('No llegaron muestras suficientes de la pulsera. Repite la escalera.');
       this.testText.setColor(UI.warn);
       return;
     }
-    if (active.kind === 'rest') {
-      this.setProfile(withRest(this.profile, result));
-      this.testText.setText(`Reposo medido: ${result} bpm.`);
-    } else {
-      this.setProfile(withAnchor(this.profile, result));
-      this.testText.setText(
-        `Ritmo cómodo: ${result} bpm → máximo derivado ${this.profile.hrMaxBpm} bpm.`,
-      );
-    }
+    this.setProfile(withStepTest(this.profile, result.easyBpm, result.hardBpm));
+    this.testText.setText(
+      `Escalera: cómodo ${result.easyBpm} · fuerte ${result.hardBpm} → máximo ${this.profile.hrMaxBpm} bpm (${MAX_SOURCE_ES[this.profile.hrMaxSource]}).`,
+    );
     this.testText.setColor(UI.good);
   }
 
@@ -309,8 +327,7 @@ export class ProfilePanel {
     this.ticker?.remove(false);
     this.ticker = undefined;
     this.active = undefined;
-    this.restButton.label.setText('Medir 1 min');
-    this.paceButton.label.setText('Medir 5 min');
+    this.stepButton.label.setText('Escalera 6 min');
     this.testText.setText('');
   }
 

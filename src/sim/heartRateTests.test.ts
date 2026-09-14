@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PaceTest, RestTest, SampleWindow } from './heartRateTests';
+import { PaceTest, RestTest, SampleWindow, StepTest } from './heartRateTests';
 
 /** Alimenta un test con una muestra por segundo según bpmAt(segundo). */
 function feed(test: { push(s: { bpm: number; timestampMs: number }): void }, sec: number, bpmAt: (t: number) => number) {
@@ -36,6 +36,25 @@ describe('RestTest', () => {
     feed(test, 5, () => 70);
     expect(test.result()).toBeUndefined();
     expect(test.progress(5000)).toMatchObject({ elapsedSec: 5, remainingSec: 55, liveBpm: 70, done: false });
+  });
+});
+
+describe('StepTest', () => {
+  it('toma la cola de cada escalón útil y reporta el escalón en curso', () => {
+    const test = new StepTest(120, 60, 45);
+    // Calor a 100, cómodo sube y se clava en 128, fuerte sube y se clava en 158.
+    feed(test, 360, (t) => (t < 120 ? 100 : t < 240 ? Math.min(128, 100 + (t - 120)) : Math.min(158, 128 + (t - 240))));
+    expect(test.progress(30_000)).toMatchObject({ stage: 'warm', stageRemainingSec: 90, done: false });
+    expect(test.progress(200_000)).toMatchObject({ stage: 'easy', stageRemainingSec: 40 });
+    expect(test.progress(300_000)).toMatchObject({ stage: 'hard', stageRemainingSec: 60 });
+    expect(test.progress(360_000).done).toBe(true);
+    expect(test.result()).toEqual({ easyBpm: 128, hardBpm: 158 });
+  });
+
+  it('sin la cola de un escalón no hay resultado', () => {
+    const test = new StepTest(120, 60, 45);
+    feed(test, 250, () => 120); // se corta al empezar el escalón fuerte
+    expect(test.result()).toBeUndefined();
   });
 });
 

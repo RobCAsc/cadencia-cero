@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { SIM, type SimConfig } from '../../config';
 import { expandProgram, segmentIndexAt, type ExpandedSegment, type TrainingProgram } from '../program';
+import { playerSpeedFromEffort } from '../effortTable';
 import { RideSim } from '../RideSim';
 import type { RideSummary } from '../types';
-import { ceilingEffort, floorEffort } from '../zones';
+import { ceilingEffort, floorEffort, zoneRange } from '../zones';
 import { applyAdjustments, PROGRAM_CATALOG } from './catalog';
 
 // Un rider modelo con pulso de muñeca: sigue la zona prescrita, empieza a
@@ -113,8 +114,17 @@ describe('el catálogo con un pulso de muñeca que responde con retraso', () => 
     expect(out.summary.timesCaught).toBeGreaterThan(0);
   });
 
-  it('con el tope antiguo de 150 m, saltarse las oleadas salía gratis (documenta por qué es 100)', () => {
-    const out = rideWithLaggedPulse(catalogProgram('oleadas'), { flat: 0.65, cfg: { gapMaxM: 150 } });
+  it('con la horda en el piso de la zona y el tope antiguo de 150 m, saltarse las oleadas salía gratis (documenta por qué existen la fracción y el tope)', () => {
+    const base = catalogProgram('oleadas');
+    const atFloor: TrainingProgram = {
+      ...base,
+      segments: base.segments.map((seg) =>
+        seg.kind === 'repeat'
+          ? seg
+          : { ...seg, zombieSpeedKph: playerSpeedFromEffort(floorEffort(zoneRange(seg.zone)[0])) },
+      ),
+    };
+    const out = rideWithLaggedPulse(atFloor, { flat: 0.65, cfg: { gapMaxM: 150, hordeWakeSec: 0 } });
     expect(out.summary.timesCaught).toBe(0);
   });
 });

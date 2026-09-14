@@ -135,6 +135,8 @@ export class RideSim {
       this.cfg.zombieRampSec,
       this.cfg.zombieRampUpSec,
     );
+    // La horda despierta: parada al principio, a su ritmo al cabo de hordeWakeSec.
+    if (this.cfg.hordeWakeSec > 0) zKph *= Math.min(1, this.elapsedSec / this.cfg.hordeWakeSec);
     if (this.caughtGraceSec > 0) zKph *= this.cfg.catch.stumbleSpeedFactor;
 
     // Zona prescrita por el tramo: bajo el piso te alcanzan (la horda corre a

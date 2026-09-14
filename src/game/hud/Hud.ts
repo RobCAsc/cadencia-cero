@@ -139,7 +139,11 @@ export class Hud {
     // Por encima del techo de zona la ventaja está congelada, y se dice.
     this.gapLabel.setText(state.aboveZone ? 'ventaja congelada' : 'de ventaja');
     this.gapLabel.setColor(state.aboveZone ? UI.warn : UI.textMuted);
-    this.hordeSpeedText.setText(`horda a ${state.zombieSpeedKph.toFixed(0)} km/h`);
+    this.hordeSpeedText.setText(
+      state.elapsedSec < SIM.hordeWakeSec && state.zombieSpeedKph < state.segment.zombieSpeedKph * 0.95
+        ? 'la horda despierta…'
+        : `horda a ${state.zombieSpeedKph.toFixed(0)} km/h`,
+    );
 
     const heartRate = state.inputMode === 'heartRate' || state.heartRateBpm > 0;
     if (state.inputMode === 'heartRate') {

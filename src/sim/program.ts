@@ -1,6 +1,6 @@
-import { EFFORT, type EffortTable } from '../config';
+import { EFFORT, ZONES, type EffortTable } from '../config';
 import { playerSpeedFromEffort } from './effortTable';
-import { floorEffort, zoneRange, type ZoneRange } from './zones';
+import { ceilingEffort, floorEffort, zoneRange, type ZoneRange } from './zones';
 
 // Un programa de entrenamiento ES el perfil del antagonista. Con el pulso como
 // único sensor, lo que se prescribe es una ZONA cardíaca por tramo: la horda
@@ -51,9 +51,28 @@ export interface ExpandedSegment extends SpeedSegment {
   waveTotal?: number;
 }
 
-/** Velocidad de la horda que exige el piso de una zona, según la tabla de esfuerzo. */
-export function hordeSpeedForZone(zone: number, table: EffortTable = EFFORT): number {
-  return playerSpeedFromEffort(floorEffort(zone), table);
+/**
+ * Esfuerzo al que corre la horda para una zona prescrita: una fracción por
+ * dentro del rango (ZONES.hordeFraction), nunca en el borde. Z5 no tiene
+ * techo; se toma el 100 %.
+ */
+export function hordeEffortForZone(
+  zoneMin: number,
+  zoneMax: number = zoneMin,
+  fraction: number = ZONES.hordeFraction,
+): number {
+  const lo = floorEffort(zoneMin);
+  const hi = Math.min(1, ceilingEffort(zoneMax));
+  return lo + Math.max(0, Math.min(1, fraction)) * (hi - lo);
+}
+
+/** Velocidad de la horda para una zona prescrita, según la tabla de esfuerzo. */
+export function hordeSpeedForZone(
+  zoneMin: number,
+  zoneMax: number = zoneMin,
+  table: EffortTable = EFFORT,
+): number {
+  return playerSpeedFromEffort(hordeEffortForZone(zoneMin, zoneMax), table);
 }
 
 function resolveZone(program: TrainingProgram, index: number, seg: SpeedSegment): [number, number] {
@@ -78,7 +97,7 @@ export function expandProgram(program: TrainingProgram, table: EffortTable = EFF
       sourceIndex: index,
       zoneMin,
       zoneMax,
-      zombieSpeedKph: seg.zombieSpeedKph ?? hordeSpeedForZone(zoneMin, table),
+      zombieSpeedKph: seg.zombieSpeedKph ?? hordeSpeedForZone(zoneMin, zoneMax, table),
     };
   };
 

@@ -14,6 +14,7 @@ const cfg = (over: Partial<SimConfig> = {}, catchOver: Partial<CatchConfig> = {}
   ...SIM,
   speed: TABLE_RPM_EQ_KPH,
   startResistance: 1,
+  hordeWakeSec: 0, // la horda arranca a su ritmo salvo que el test pida lo contrario
   ...over,
   catch: { ...SIM.catch, ...catchOver },
 });
@@ -68,6 +69,18 @@ describe('RideSim: la integral del gap', () => {
     expect(sim.state.gapM).toBeCloseTo(50 + ((20 - 14) / 3.6) * 10, 1);
     expect(sim.state.distanceM).toBeCloseTo((20 / 3.6) * 10, 1);
     expect(sim.state.timesCaught).toBe(0);
+  });
+
+  it('la horda despierta: parada al arrancar, a su ritmo al cabo de hordeWakeSec', () => {
+    const sim = new RideSim(steady(1000, 20), cfg({ hordeWakeSec: 10, initialGapM: 50 }), now, CADENCE);
+    pedalStep(sim, 0);
+    expect(sim.state.zombieSpeedKph).toBe(0); // en el primer tick aún no ha despertado
+    pedalFor(sim, 4.9, 0);
+    expect(sim.state.zombieSpeedKph).toBeCloseTo(10, 0);
+    pedalFor(sim, 6, 0);
+    expect(sim.state.zombieSpeedKph).toBe(20);
+    // Parado y con la horda despertando se pierde menos que con la horda a tope.
+    expect(sim.state.gapM).toBeGreaterThan(50 - (20 / 3.6) * 11);
   });
 
   it('clampa dt a maxDtSec y no avanza con dt <= 0', () => {

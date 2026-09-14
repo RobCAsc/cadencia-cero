@@ -58,6 +58,13 @@ export const ZONES = {
    * puede ir a cero, así que un tramo suave la pone a este esfuerzo (~7 km/h).
    */
   easyFloorEffort: 0.35,
+  /**
+   * La horda corre esta fracción por DENTRO de la zona prescrita (0 = en el
+   * piso, 0.5 = en el centro). En el borde bajo de la zona pierdes terreno
+   * despacio; en el centro estás a salvo. Con 0 el juego se queda inerte:
+   * cualquier pedaleo por encima del piso deja la ventaja clavada en el tope.
+   */
+  hordeFraction: 0.35,
 } as const;
 
 /**
@@ -123,6 +130,12 @@ export interface SimConfig {
   recoveryWindowSec: number;
   maxDtSec: number;
   initialGapM: number;
+  /**
+   * La horda "despierta": arranca parada y llega a su velocidad en este
+   * tiempo. Cubre el minuto que tarda el pulso en subir desde el reposo, y
+   * permite empezar por debajo del tope para que la ventaja se GANE.
+   */
+  hordeWakeSec: number;
   /** Clamp del gap: prescripción sobre acumulación de ventaja. */
   gapMaxM: number;
   /** Rampa lineal de la horda al FRENAR al entrar a un segmento más lento. */
@@ -154,9 +167,11 @@ export const SIM: SimConfig = {
   recoveryPeakWindowSec: 20,
   recoveryWindowSec: 60,
   maxDtSec: 0.25,
-  // Colchón de salida: el pulso tarda uno o dos minutos en subir desde el
-  // reposo, y en ese rato el rider es más lento que la horda del calentamiento.
-  initialGapM: 100,
+  // Se empieza a mitad del tope: la ventaja se gana pedaleando bien y se ve
+  // subir. La horda despierta despacio para que el retraso del pulso al
+  // arrancar no cueste la salida.
+  initialGapM: 50,
+  hordeWakeSec: 45,
   // Tope del colchón. Con 150 m, quien se salta las oleadas y recupera "bien"
   // rellena en la recuperación lo que perdió en la oleada y nunca es
   // atrapado; con 100 m el intervalo se hace cumplir (ver catalog.pulse.test).

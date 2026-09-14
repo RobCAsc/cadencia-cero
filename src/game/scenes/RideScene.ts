@@ -7,11 +7,13 @@ import { expandProgram, totalDurationSec, type TrainingProgram } from '../../sim
 import { applyAdjustments, PROGRAM_CATALOG } from '../../sim/programs/catalog';
 import { OLEADAS } from '../../sim/programs/oleadas';
 import { RideSim } from '../../sim/RideSim';
+import { preRideRestReadings } from '../../sim/progress';
 import {
   applyAdvice,
   calibrationAdvice,
   toSimRider,
   withObservedPeak,
+  withRitualRest,
   type StoredRiderProfile,
 } from '../../sim/riderProfile';
 import type { RideSummary, SimEvent, SimState } from '../../sim/types';
@@ -155,6 +157,27 @@ export class RideScene extends Phaser.Scene {
     this.calm = undefined;
     this.preRideRestBpm = restBpm;
     this.startedAtMs = Date.now(); // el minuto de calma no es tiempo de salida
+    if (restBpm !== undefined) this.learnRestFromRitual(restBpm);
+  }
+
+  /**
+   * El reposo del perfil sale del minuto de calma: con tres lecturas ya hay
+   * mediana y sustituye al valor por defecto (nunca a uno fijado a mano).
+   */
+  private learnRestFromRitual(todayBpm: number): void {
+    const stored = this.registry.get('riderProfileStored') as StoredRiderProfile | undefined;
+    if (!stored) return;
+    const history = (this.registry.get('sessionHistory') as SessionRecord[] | undefined) ?? [];
+    const readings = [...preRideRestReadings(history), todayBpm].slice(-7);
+    if (readings.length < 3) return;
+    const sorted = [...readings].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+    const next = withRitualRest(stored, Math.round(median));
+    if (next === stored) return;
+    saveRiderProfile(next);
+    this.registry.set('riderProfileStored', next);
+    this.registry.set('riderProfile', toSimRider(next));
   }
 
   /** El reposo vino alto: hoy toca suave. Se reinicia la escena con recuperación corta. */

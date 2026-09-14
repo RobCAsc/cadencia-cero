@@ -13,6 +13,7 @@ const cfg = (over: Partial<SimConfig> = {}): SimConfig => ({
   ...SIM,
   effort: EFFORT_LINEAR,
   heartRateSmoothingSec: 0, // sin suavizado salvo que el test lo pida
+  hordeWakeSec: 0, // la horda arranca a su ritmo salvo que el test pida lo contrario
   ...over,
 });
 

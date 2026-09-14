@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { playerSpeedFromEffort } from './effortTable';
 import {
   expandProgram,
+  hordeEffortForZone,
   hordeSpeedForZone,
   segmentIndexAt,
   totalDurationSec,
@@ -9,13 +10,13 @@ import {
   type TrainingProgram,
 } from './program';
 import { OLEADAS } from './programs/oleadas';
-import { floorEffort } from './zones';
+import { ceilingEffort, floorEffort } from './zones';
 
-// Velocidades derivadas de las zonas de Oleadas: calentamiento suave,
-// oleada en Z4-Z5 (piso Z4), recuperación en Z1-Z2 (piso Z1).
-const WARM = hordeSpeedForZone(0);
-const SURGE = hordeSpeedForZone(4);
-const RECOVER = hordeSpeedForZone(1);
+// Velocidades derivadas de las zonas de Oleadas: calentamiento suave-Z2,
+// oleada en Z4-Z5, recuperación en Z1-Z2.
+const WARM = hordeSpeedForZone(0, 2);
+const SURGE = hordeSpeedForZone(4, 5);
+const RECOVER = hordeSpeedForZone(1, 2);
 
 const prog = (segments: TrainingProgram['segments']): TrainingProgram => ({
   id: 'test',
@@ -49,7 +50,7 @@ describe('expandProgram', () => {
     expect(surges.every((s) => s.sourceIndex === 1)).toBe(true);
   });
 
-  it('deriva la velocidad de la horda del piso de la zona, salvo velocidad explícita', () => {
+  it('deriva la velocidad de la horda de la zona (por dentro, no en el borde), salvo velocidad explícita', () => {
     const exp = expandProgram(
       prog([
         { kind: 'steady', durationSec: 60, zone: 2 },
@@ -58,11 +59,23 @@ describe('expandProgram', () => {
         { kind: 'steady', durationSec: 60, zone: 4, zombieSpeedKph: 99 },
       ]),
     );
-    expect(exp[0]).toMatchObject({ zoneMin: 2, zoneMax: 2, zombieSpeedKph: playerSpeedFromEffort(floorEffort(2)) });
-    expect(exp[0]?.zombieSpeedKph).toBe(18);
-    expect(exp[1]).toMatchObject({ zoneMin: 1, zoneMax: 3, zombieSpeedKph: hordeSpeedForZone(1) });
-    expect(exp[2]?.zombieSpeedKph).toBeCloseTo(7.5);
+    // Z2 (60-70 %): la horda al 63,5 % → entre el piso (18 km/h) y el centro (20).
+    expect(exp[0]).toMatchObject({ zoneMin: 2, zoneMax: 2, zombieSpeedKph: hordeSpeedForZone(2) });
+    expect(exp[0]?.zombieSpeedKph).toBeGreaterThan(playerSpeedFromEffort(floorEffort(2)));
+    expect(exp[0]?.zombieSpeedKph).toBeLessThan(playerSpeedFromEffort((floorEffort(2) + ceilingEffort(2)) / 2));
+    expect(exp[1]).toMatchObject({ zoneMin: 1, zoneMax: 3, zombieSpeedKph: hordeSpeedForZone(1, 3) });
+    expect(exp[1]?.zombieSpeedKph).toBeGreaterThan(hordeSpeedForZone(1, 1)); // el rango ancho empuja más
+    expect(exp[2]?.zombieSpeedKph).toBeGreaterThan(7.5); // suave: por encima del piso de 7,5
+    expect(exp[2]?.zombieSpeedKph).toBeLessThan(14);
     expect(exp[3]).toMatchObject({ zoneMin: 4, zoneMax: 4, zombieSpeedKph: 99 });
+  });
+
+  it('hordeEffortForZone: fracción 0 es el piso, 0.5 el centro, y Z5 toma el 100 % como techo', () => {
+    expect(hordeEffortForZone(2, 2, 0)).toBeCloseTo(0.6);
+    expect(hordeEffortForZone(2, 2, 0.5)).toBeCloseTo(0.65);
+    expect(hordeEffortForZone(1, 2, 0.5)).toBeCloseTo(0.6);
+    expect(hordeEffortForZone(5, 5, 0.5)).toBeCloseTo(0.95);
+    expect(hordeEffortForZone(0, 0, 0)).toBeCloseTo(0.35);
   });
 
   it('rechaza zonas inválidas', () => {
