@@ -1,5 +1,5 @@
 import type { RiderProfile } from '../config';
-import type { RideSummary } from './types';
+import type { RideRpe, RideSummary } from './types';
 
 /**
  * Perfil del rider tal como se guarda en la tablet. El sim solo ve la parte
@@ -25,6 +25,9 @@ export interface StoredRiderProfile {
   observedPeakBpm?: number;
   /** Ajuste del día, en puntos porcentuales de esfuerzo (−10..+10). */
   intensityPct: number;
+  /** Cuándo se hizo la última escalera y con qué reposo: para saber cuándo repetirla. */
+  stepTestAtMs?: number;
+  stepTestRestBpm?: number;
 }
 
 /** El ritmo cómodo (media hora hablando) como ancla única: perfiles viejos. */
@@ -42,6 +45,17 @@ export const INTENSITY_MIN = -10;
 export const INTENSITY_MAX = 10;
 /** Un pico por encima de esto es ruido del sensor, no fisiología. */
 const PLAUSIBLE_MAX_BPM = 220;
+/**
+ * Un pico observado sube el máximo como mucho esto por salida. Un principiante
+ * que se pasa de vueltas en una oleada no puede conseguir que la siguiente
+ * salida sea más dura: el máximo se aprende despacio y con el rider de acuerdo.
+ */
+export const PEAK_RAISE_PER_RIDE_BPM = 3;
+/** La escalera se repite pasado este tiempo, o si el reposo bajó bastante desde entonces. */
+export const STEP_RETEST_DAYS = 42;
+export const STEP_RETEST_REST_DROP_BPM = 5;
+/** La escalera (con su escalón "no puedes hablar") se ofrece a partir de esta salida. */
+export const STEP_TEST_FROM_RIDES = 6;
 
 /** Tanaka (2001): acierta mejor que 220 − edad, con error típico de ~10 bpm. */
 export function hrMaxFromAge(ageYears: number): number {
@@ -135,7 +149,7 @@ export function withAnchor(p: StoredRiderProfile, anchorBpm: number): StoredRide
   const anchor = Math.round(anchorBpm);
   const derived = hrMaxFromAnchor(p.hrRestBpm, anchor);
   const next: StoredRiderProfile = { ...p, anchorBpm: anchor };
-  if (p.hrMaxSource === 'observed' && p.observedPeakBpm !== undefined && p.observedPeakBpm > derived) {
+  if (p.hrMaxSource === 'observed' && p.hrMaxBpm > derived) {
     return ensureRange(next);
   }
   next.hrMaxBpm = derived;
@@ -147,19 +161,44 @@ export function withAnchor(p: StoredRiderProfile, anchorBpm: number): StoredRide
  * La escalera (dos anclas) manda sobre la edad y sobre el ritmo cómodo; un
  * pico observado mayor sigue mandando sobre todo, porque es un hecho.
  */
-export function withStepTest(p: StoredRiderProfile, easyBpm: number, hardBpm: number): StoredRiderProfile {
+export function withStepTest(
+  p: StoredRiderProfile,
+  easyBpm: number,
+  hardBpm: number,
+  nowMs?: number,
+): StoredRiderProfile {
   const easy = Math.round(easyBpm);
   const hard = Math.round(hardBpm);
   const derived = hrMaxFromStepTest(p.ageYears, p.hrRestBpm, easy, hard);
-  const next: StoredRiderProfile = { ...p, anchorBpm: easy, hardBpm: hard };
-  if (p.observedPeakBpm !== undefined && p.observedPeakBpm > derived) {
-    next.hrMaxBpm = p.observedPeakBpm;
-    next.hrMaxSource = 'observed';
+  const next: StoredRiderProfile = {
+    ...p,
+    anchorBpm: easy,
+    hardBpm: hard,
+    stepTestRestBpm: p.hrRestBpm,
+    ...(nowMs !== undefined ? { stepTestAtMs: nowMs } : {}),
+  };
+  if (p.hrMaxSource === 'observed' && p.hrMaxBpm > derived) {
     return ensureRange(next);
   }
   next.hrMaxBpm = derived;
   next.hrMaxSource = 'step';
   return ensureRange(next);
+}
+
+export type StepTestDue = 'never' | 'stale' | 'restDropped' | 'fresh';
+
+/**
+ * ¿Toca repetir la escalera? Nunca hecha; vieja (seis semanas); o el reposo
+ * bajó bastante desde que se hizo (las zonas dependen del reposo tanto como
+ * del máximo).
+ */
+export function stepTestDue(p: StoredRiderProfile, nowMs: number): StepTestDue {
+  if (p.stepTestAtMs === undefined) return 'never';
+  if (nowMs - p.stepTestAtMs > STEP_RETEST_DAYS * 86_400_000) return 'stale';
+  if (p.stepTestRestBpm !== undefined && p.stepTestRestBpm - p.hrRestBpm >= STEP_RETEST_REST_DROP_BPM) {
+    return 'restDropped';
+  }
+  return 'fresh';
 }
 
 export function withIntensity(p: StoredRiderProfile, intensityPct: number): StoredRiderProfile {
@@ -169,20 +208,33 @@ export function withIntensity(p: StoredRiderProfile, intensityPct: number): Stor
   };
 }
 
+export interface ObservedPeakOptions {
+  /**
+   * Si el pico puede subir el máximo. Solo cuando la salida fue limpia y al
+   * rider no le pareció demasiado: un pico de un día en que uno se pasó de
+   * vueltas no puede endurecer la siguiente salida.
+   */
+  allowRaise?: boolean;
+  maxRaiseBpm?: number;
+}
+
 /**
- * Un pico sostenido por encima del máximo actual lo sube: así el máximo se
- * aprende de las oleadas sin una prueba de agotamiento.
+ * Un pico sostenido por encima del máximo actual lo sube, pero despacio
+ * (PEAK_RAISE_PER_RIDE_BPM por salida) y solo con permiso: así el máximo se
+ * aprende de las oleadas sin una prueba de agotamiento y sin que un exceso
+ * se convierta en exigencia. El pico observado se anota siempre.
  */
 export function withObservedPeak(
   p: StoredRiderProfile,
   peakBpm: number,
+  opts: ObservedPeakOptions = {},
 ): { profile: StoredRiderProfile; raised: boolean } {
   const peak = Math.round(peakBpm);
   if (peak <= 0 || peak > PLAUSIBLE_MAX_BPM) return { profile: p, raised: false };
   const observed = Math.max(p.observedPeakBpm ?? 0, peak);
   const next: StoredRiderProfile = { ...p, observedPeakBpm: observed };
-  if (peak > p.hrMaxBpm) {
-    next.hrMaxBpm = peak;
+  if (peak > p.hrMaxBpm && (opts.allowRaise ?? true)) {
+    next.hrMaxBpm = Math.min(peak, p.hrMaxBpm + (opts.maxRaiseBpm ?? PEAK_RAISE_PER_RIDE_BPM));
     next.hrMaxSource = 'observed';
     return { profile: next, raised: true };
   }
@@ -193,26 +245,24 @@ export type CalibrationAdvice = 'lower' | 'raise' | 'ok';
 
 /** Fracción de la salida por encima del techo de zona a partir de la cual el juego fue demasiado fácil. */
 export const TOO_EASY_ABOVE_FRACTION = 0.5;
+/** Con esta precisión de zona, "demasiado" dice que las zonas están altas, no que el rider se pasó. */
+const HARD_RPE_MIN_PRECISION = 0.5;
 
 /**
- * Lectura del resumen de sesión en clave de calibración. Los tramos suaves
- * (calentamiento, recuperación, vuelta a la calma) son fáciles por diseño:
- * que te atrapen ahí dice que las zonas están altas, no que flojeaste. Y al
- * revés: pasar media salida por encima del techo sin que te alcancen dice
- * que las zonas están bajas, aunque el esfuerzo medio parezca alto.
+ * Lectura del resumen de sesión en clave de calibración, con lo que dijo el
+ * rider. Los tramos suaves (calentamiento, recuperación, vuelta a la calma)
+ * son fáciles por diseño: que te atrapen ahí dice que las zonas están altas,
+ * no que flojeaste; y si siguió la zona y le pareció demasiado, lo mismo.
+ * Subir la exigencia solo se hace con el rider de acuerdo ("fácil"): sin
+ * capturas y con media salida por encima del techo, o con esfuerzo bajo.
  */
-export function calibrationAdvice(summary: RideSummary): CalibrationAdvice {
+export function calibrationAdvice(summary: RideSummary, rpe?: RideRpe): CalibrationAdvice {
   if (summary.timesCaughtInEasy >= 2) return 'lower';
-  if (summary.timesCaught === 0 && summary.avgEffortFrac > 0 && summary.avgEffortFrac < 0.45) {
-    return 'raise';
-  }
-  if (
-    summary.timesCaught === 0 &&
-    summary.durationSec > 0 &&
-    summary.aboveZoneSec / summary.durationSec > TOO_EASY_ABOVE_FRACTION
-  ) {
-    return 'raise';
-  }
+  const precision = summary.durationSec > 0 ? summary.inZoneSec / summary.durationSec : 0;
+  if (rpe === 'hard' && precision >= HARD_RPE_MIN_PRECISION) return 'lower';
+  if (rpe !== 'easy' || summary.timesCaught > 0 || summary.durationSec <= 0) return 'ok';
+  if (summary.avgEffortFrac > 0 && summary.avgEffortFrac < 0.45) return 'raise';
+  if (summary.aboveZoneSec / summary.durationSec > TOO_EASY_ABOVE_FRACTION) return 'raise';
   return 'ok';
 }
 

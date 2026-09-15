@@ -1,5 +1,5 @@
 import type { InputMode } from '../config';
-import type { RideSummary } from './types';
+import type { RideRpe, RideSummary } from './types';
 
 /**
  * Una salida guardada en la tablet. Es la unidad del hábito: todo lo que la
@@ -37,6 +37,12 @@ export interface SessionRecord {
   hrRestBpm: number;
   /** Reposo medido en el ritual de un minuto antes de salir (si se hizo). */
   preRideRestBpm?: number;
+  /** Capturas en tramos suaves (los registros viejos no lo traen). */
+  timesCaughtInEasy?: number;
+  /** Cómo le pareció al rider, si contestó. */
+  rpe?: RideRpe;
+  /** Ventaja cada pocos segundos: el fantasma para la próxima vez con el mismo programa. */
+  gapTrace?: number[];
 }
 
 export interface SessionInput {
@@ -48,6 +54,7 @@ export interface SessionInput {
   summary: RideSummary;
   hrRestBpm: number;
   preRideRestBpm?: number;
+  rpe?: RideRpe;
 }
 
 export function toSessionRecord(input: SessionInput): SessionRecord {
@@ -64,6 +71,9 @@ export function toSessionRecord(input: SessionInput): SessionRecord {
     durationSec: s.durationSec,
     distanceM: s.distanceM,
     timesCaught: s.timesCaught,
+    timesCaughtInEasy: s.timesCaughtInEasy,
+    ...(input.rpe !== undefined ? { rpe: input.rpe } : {}),
+    ...(s.gapTrace.length > 0 ? { gapTrace: [...s.gapTrace] } : {}),
     avgHeartRateBpm: s.avgHeartRateBpm,
     peakHeartRateBpm: s.peakHeartRateBpm,
     avgEffortFrac: s.avgEffortFrac,

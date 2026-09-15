@@ -43,6 +43,25 @@ export function zoneLabel(zoneMin: number, zoneMax: number): string {
   return zoneMin === zoneMax ? one(zoneMin) : `${one(zoneMin)}-${one(zoneMax)}`;
 }
 
+/**
+ * La prueba del habla por zona: la guía del modo por sensación y de quien no
+ * lleva pulsera. Es lo que la fisiología sabe leer sin sensor.
+ */
+const TALK_TEST: readonly string[] = [
+  'muy suave: podrías cantar',
+  'suave: hablas sin ningún esfuerzo',
+  'hablas frases enteras',
+  'solo frases cortas',
+  'palabras sueltas',
+  'no puedes hablar',
+];
+
+export function talkTestCue(zoneMin: number, zoneMax: number = zoneMin): string {
+  const lo = TALK_TEST[Math.max(0, Math.min(TALK_TEST.length - 1, zoneMin))] ?? '';
+  const hi = TALK_TEST[Math.max(0, Math.min(TALK_TEST.length - 1, zoneMax))] ?? '';
+  return zoneMin === zoneMax || lo === hi ? lo : `entre "${lo}" y "${hi}"`;
+}
+
 /** Segundos de cardio real: desde activeFromZone (Z2) hacia arriba. */
 export function activeSec(zoneSec: readonly number[], fromZone: number = ZONES.activeFromZone): number {
   let total = 0;

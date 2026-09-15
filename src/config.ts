@@ -93,8 +93,33 @@ export const RIDER: RiderProfile = {
   effortScale: 1,
 };
 
-/** Qué entrada mueve al ciclista. El pulso es la entrada real del proyecto. */
-export type InputMode = 'heartRate' | 'cadence';
+/**
+ * Qué entrada mueve al ciclista. El pulso es la entrada real del proyecto.
+ * 'feel' es el modo por sensación: para quien no puede fiarse del pulso
+ * (medicación, cribado con avisos): los tramos van por tiempo, el ciclista
+ * sigue el paso prescrito y la guía es la prueba del habla, sin horda que
+ * persiga por pulso.
+ */
+export type InputMode = 'heartRate' | 'cadence' | 'feel';
+
+export interface SafetyConfig {
+  /** Pulso por encima del máximo del perfil durante este tiempo → la horda se congela y se pide aflojar. */
+  overMaxSec: number;
+  /** Se suelta cuando el pulso baja esto por debajo del máximo (histéresis). */
+  overMaxReleaseBpm: number;
+  /** Fracción del máximo que cuenta como "muy alto"... */
+  sustainedHighFrac: number;
+  /** ...y cuánto tiempo seguido dispara el aviso (la escena cambia a suave en arranque y base). */
+  sustainedHighSec: number;
+}
+
+export interface PushConfig {
+  /** El empujón opcional de los fondos: duración y zona. */
+  durationSec: number;
+  zone: number | readonly [number, number];
+  /** Ruta extra por completarlo sin ser alcanzado. */
+  bonusM: number;
+}
 
 export interface CatchConfig {
   healthCost: number;
@@ -154,6 +179,12 @@ export interface SimConfig {
    */
   surgeWarningSec: number;
   catch: CatchConfig;
+  safety: SafetyConfig;
+  push: PushConfig;
+  /** Enfriamiento que sustituye al resto del programa al pulsar Terminar. */
+  quitCooldownSec: number;
+  /** Cada cuánto se muestrea la ventaja para el fantasma de la próxima vez. */
+  gapTraceStepSec: number;
 }
 
 export const SIM: SimConfig = {
@@ -188,6 +219,22 @@ export const SIM: SimConfig = {
     graceSec: 5,
     stumbleSpeedFactor: 0.6,
   },
+  // Reglas de parada: el juego nunca pide más que el techo de la zona, y si
+  // el pulso se pasa del máximo del perfil la horda se congela hasta que
+  // afloja. Muy alto sostenido dos minutos es aviso, no premio.
+  safety: {
+    overMaxSec: 30,
+    overMaxReleaseBpm: 3,
+    sustainedHighFrac: 0.95,
+    sustainedHighSec: 120,
+  },
+  push: {
+    durationSec: 60,
+    zone: 3,
+    bonusM: 200,
+  },
+  quitCooldownSec: 120,
+  gapTraceStepSec: 5,
 };
 
 export const FAKE = {

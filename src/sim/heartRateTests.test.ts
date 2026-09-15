@@ -40,8 +40,18 @@ describe('RestTest', () => {
 });
 
 describe('StepTest', () => {
+  it('por defecto el calor dura cuatro minutos: el escalón fuerte no se pide en frío', () => {
+    const test = new StepTest();
+    expect(test.totalSec).toBe(480);
+    expect(test.stageAt(239)).toBe('warm');
+    expect(test.stageAt(240)).toBe('easy');
+    expect(test.stageAt(360)).toBe('hard');
+    feed(test, 10, () => 100);
+    expect(test.progress(10_000)).toMatchObject({ stage: 'warm', stageRemainingSec: 230 });
+  });
+
   it('toma la cola de cada escalón útil y reporta el escalón en curso', () => {
-    const test = new StepTest(120, 60, 45);
+    const test = new StepTest(120, 60, 45, 120);
     // Calor a 100, cómodo sube y se clava en 128, fuerte sube y se clava en 158.
     feed(test, 360, (t) => (t < 120 ? 100 : t < 240 ? Math.min(128, 100 + (t - 120)) : Math.min(158, 128 + (t - 240))));
     expect(test.progress(30_000)).toMatchObject({ stage: 'warm', stageRemainingSec: 90, done: false });
@@ -52,7 +62,7 @@ describe('StepTest', () => {
   });
 
   it('sin la cola de un escalón no hay resultado', () => {
-    const test = new StepTest(120, 60, 45);
+    const test = new StepTest(120, 60, 45, 120);
     feed(test, 250, () => 120); // se corta al empezar el escalón fuerte
     expect(test.result()).toBeUndefined();
   });

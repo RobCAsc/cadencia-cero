@@ -287,6 +287,15 @@ export interface Recommendation {
 /** Salidas que cuentan para pasar de fase. */
 const BASE_FROM_RIDES = 6;
 const ROTATION_FROM_RIDES = 12;
+/** La rotación exige evidencia, no solo un contador: semanas cumplidas y unos Empujones limpios. */
+export const ROTATION_MIN_MET_WEEKS = 2;
+/** Con tantas semanas cumplidas seguidas, el fondo puede crecer hasta el tope largo. */
+const LONG_BASE_WEEKS = 8;
+/** Topes del tramo principal (min) por fase: el volumen sigue creciendo, la puerta de 150 min se alcanza. */
+const EASY_CAP_MIN = { base: 15, rotacion: 20 } as const;
+const BASE_CAP_MIN = { base: 25, rotacion: 35, rotacionLarga: 45 } as const;
+/** Dos salidas seguidas "demasiado": se repite la fase anterior y el volumen baja a esto. */
+const TOO_HARD_VOLUME_SCALE = 0.8;
 
 const NUM_ES: Record<number, string> = { 4: 'cuatro', 6: 'seis', 8: 'ocho' };
 
@@ -297,16 +306,48 @@ const rec = (
   reason: string,
 ): Recommendation => ({ phase, programId, values, reason });
 
+/** Semanas con la meta cumplida desde la primera salida (la actual incluida si ya está). */
+export function metWeeks(sessions: readonly SessionRecord[], nowMs: number): number {
+  if (sessions.length === 0) return 0;
+  const first = firstWeekOf(sessions);
+  let cursor = weekStartMs(nowMs);
+  let met = 0;
+  while (cursor >= first) {
+    if (summarizeWeek(sessions, cursor).met) met += 1;
+    cursor = previousWeekStart(cursor);
+  }
+  return met;
+}
+
+/** Unos Empujones completos sin captura en tramos suaves: la prueba de que las zonas y el rider están listos. */
+export function empujonesClean(sessions: readonly SessionRecord[]): boolean {
+  return sessions.some(
+    (s) =>
+      s.programId === 'empujones' &&
+      s.completed &&
+      isCountable(s) &&
+      (s.timesCaughtInEasy ?? s.timesCaught) === 0,
+  );
+}
+
+/** Las dos últimas salidas que cuentan le parecieron demasiado al rider. */
+export function lastTwoTooHard(sessions: readonly SessionRecord[]): boolean {
+  const countable = sessions.filter(isCountable);
+  return countable.length >= 2 && countable.slice(-2).every((s) => s.rpe === 'hard');
+}
+
 /**
  * Qué salida toca hoy: un plan por fases que se explica solo.
  * - Arranque (salidas 1-5, unas dos semanas): corto y suave, Z1-Z2, sin oleadas.
  * - Base (6-11, otras dos semanas): fondo más largo y los primeros empujones en Z3.
- * - Rotación (12+): fondo → oleadas → recuperación; con más base, umbral y
- *   pirámide alternan por semanas, y las oleadas crecen 4 → 6 → 8.
+ * - Rotación (12+, y solo con dos semanas cumplidas y unos Empujones limpios):
+ *   fondo → oleadas → recuperación; cada tercera semana el fondo son Cuestas,
+ *   con más base entran umbral y pirámide, y las oleadas crecen 4 → 6 → 8.
  * - Descarga: tras cuatro semanas cumplidas seguidas, una suave para asimilar.
- * El volumen sube unos minutos por semana con las salidas hechas, nunca de
- * golpe, y jamás se encadenan dos días duros ni se exige nada tras una salida
- * ya hecha hoy.
+ * El volumen sube un minuto por salida hasta el tope de la fase (25 en base,
+ * 35 en rotación, 45 tras ocho semanas cumplidas seguidas). Dos salidas
+ * seguidas "demasiado" repiten la fase anterior con menos volumen. Jamás se
+ * encadenan dos días duros ni se exige nada tras una salida ya hecha hoy.
  */
 export function recommendToday(sessions: readonly SessionRecord[], nowMs: number): Recommendation {
   const countable = sessions.filter(isCountable);
@@ -316,11 +357,40 @@ export function recommendToday(sessions: readonly SessionRecord[], nowMs: number
   const lastWasToday = last !== undefined && sameLocalDay(last.startedAtMs, nowMs);
   const lastWasHard =
     last !== undefined && HARD_TARGETS.has(last.target) && nowMs - last.startedAtMs < 2 * DAY_MS;
-  const weekParity = Math.floor(weekStartMs(nowMs) / (7 * DAY_MS)) % 2;
-  // Carga progresiva: un minuto más de tramo principal por salida hecha.
-  const easyMin = Math.min(15, 8 + total);
-  const baseMin = Math.min(25, 10 + total);
-  const phase: PlanPhase = total < BASE_FROM_RIDES ? 'arranque' : total < ROTATION_FROM_RIDES ? 'base' : 'rotacion';
+  const weekIndex = Math.floor(weekStartMs(nowMs) / (7 * DAY_MS));
+  const tooHard = lastTwoTooHard(countable);
+  const doneBefore = streakWeeksBefore(sessions, nowMs);
+
+  // La fase por contador, y luego la evidencia: la rotación se gana.
+  let phase: PlanPhase = total < BASE_FROM_RIDES ? 'arranque' : total < ROTATION_FROM_RIDES ? 'base' : 'rotacion';
+  let held: string | undefined;
+  if (phase === 'rotacion') {
+    if (metWeeks(sessions, nowMs) < ROTATION_MIN_MET_WEEKS) {
+      phase = 'base';
+      held = 'La rotación llega con dos semanas cumplidas.';
+    } else if (!empujonesClean(countable)) {
+      phase = 'base';
+      held = 'La rotación llega con unos Empujones completos sin capturas en los tramos suaves.';
+    }
+  }
+  if (tooHard && phase !== 'arranque') {
+    phase = phase === 'rotacion' ? 'base' : 'arranque';
+    held = 'Las dos últimas te parecieron demasiado: repetimos la fase anterior, más corto.';
+  }
+
+  // Carga progresiva: un minuto más de tramo principal por salida hecha,
+  // hasta el tope de la fase; menos si las últimas fueron demasiado.
+  const scale = tooHard ? TOO_HARD_VOLUME_SCALE : 1;
+  const easyCap = phase === 'rotacion' ? EASY_CAP_MIN.rotacion : EASY_CAP_MIN.base;
+  const baseCap =
+    phase === 'rotacion'
+      ? doneBefore >= LONG_BASE_WEEKS
+        ? BASE_CAP_MIN.rotacionLarga
+        : BASE_CAP_MIN.rotacion
+      : BASE_CAP_MIN.base;
+  const easyMin = Math.round(Math.min(easyCap, 8 + total) * scale);
+  const baseMin = Math.round(Math.min(baseCap, 10 + total) * scale);
+  const why = (reason: string) => (held ? `${reason} ${held}` : reason);
 
   if (total === 0) {
     return rec('arranque', 'primera-salida', {}, 'Tu primera salida: doce minutos para conocer la bici y la horda.');
@@ -333,11 +403,10 @@ export function recommendToday(sessions: readonly SessionRecord[], nowMs: number
   }
   if (phase === 'arranque') {
     return total % 2 === 0
-      ? rec('arranque', 'recuperacion', { warmupMin: 3, mainMin: easyMin }, 'Semanas de arranque: rodar suave y seguido vale más que apretar.')
-      : rec('arranque', 'fondo', { warmupMin: 3, mainMin: baseMin }, 'Semanas de arranque: hoy un poco más largo, sin oleadas.');
+      ? rec('arranque', 'recuperacion', { warmupMin: 3, mainMin: easyMin }, why('Semanas de arranque: rodar suave y seguido vale más que apretar.'))
+      : rec('arranque', 'fondo', { warmupMin: 3, mainMin: baseMin }, why('Semanas de arranque: hoy un poco más largo, sin oleadas.'));
   }
 
-  const doneBefore = streakWeeksBefore(sessions, nowMs);
   if (doneBefore > 0 && doneBefore % DELOAD_EVERY_WEEKS === 0 && thisWeek < HABIT.sessionsPerWeek) {
     const reason = `Semana de descarga: llevas ${doneBefore} cumplidas seguidas. Hoy suave, el cuerpo asimila.`;
     return thisWeek === 0
@@ -348,33 +417,139 @@ export function recommendToday(sessions: readonly SessionRecord[], nowMs: number
   const closing = thisWeek >= 3 ? 'Semana cumplida. Lo de hoy es regalo: suave.' : 'Tercera de la semana: recuperación para cerrar.';
 
   if (phase === 'base') {
-    if (thisWeek === 0) return rec('base', 'fondo', { mainMin: baseMin }, 'Base: la primera de la semana, larga y en Z2.');
+    if (thisWeek === 0) return rec('base', 'fondo', { mainMin: baseMin }, why('Base: la primera de la semana, larga y en Z2.'));
     if (thisWeek === 1) {
       return lastWasHard
-        ? rec('base', 'fondo', { mainMin: baseMin }, 'Ayer fue dura: hoy base, la horda lejos.')
-        : rec('base', 'empujones', {}, 'Primeros empujones: dos minutos en Z3, tres veces. Sin sprints todavía.');
+        ? rec('base', 'fondo', { mainMin: baseMin }, why('Ayer fue dura: hoy base, la horda lejos.'))
+        : rec('base', 'empujones', {}, why('Empujones: dos minutos en Z3, tres veces. Sin sprints todavía.'));
     }
-    return rec('base', 'recuperacion', { mainMin: easyMin }, closing);
+    return rec('base', 'recuperacion', { mainMin: easyMin }, why(closing));
   }
 
   const repeats = total < 18 ? 4 : total < 30 ? 6 : 8;
   if (thisWeek === 0) {
-    return total >= 24 && weekParity === 1
-      ? rec('rotacion', 'umbral', {}, 'Primera salida de la semana: presión sostenida.')
-      : rec('rotacion', 'fondo', { mainMin: baseMin }, 'Primera salida de la semana: base aerobia.');
+    if (total >= 18 && weekIndex % 3 === 2) {
+      // Cada cuesta crece con el volumen de base: 3 min con 25, 4 con 35, 5 con 45.
+      const climbMin = Math.min(5, Math.max(2, Math.round(baseMin / 8)));
+      return rec('rotacion', 'cuestas', { mainMin: climbMin }, 'Primera de la semana: cuestas. Resistencia arriba, cadencia baja; el pulso manda.');
+    }
+    return rec('rotacion', 'fondo', { mainMin: baseMin }, 'Primera salida de la semana: base aerobia.');
   }
   if (thisWeek === 1) {
     if (lastWasHard) return rec('rotacion', 'fondo', { mainMin: baseMin }, 'Ayer fue dura: hoy base, la horda lejos.');
-    return total >= 24 && weekParity === 1
+    if (total >= 24 && weekIndex % 4 === 3) {
+      return rec('rotacion', 'umbral', {}, 'La salida dura de la semana: presión sostenida veinte minutos.');
+    }
+    return total >= 24 && weekIndex % 2 === 1
       ? rec('rotacion', 'piramide', {}, 'La salida dura de la semana: oleadas en pirámide.')
       : rec('rotacion', 'oleadas', { repeats }, `La salida dura de la semana: ${NUM_ES[repeats] ?? repeats} oleadas.`);
   }
   return rec('rotacion', 'recuperacion', { mainMin: easyMin }, closing);
 }
 
+// ---- la próxima salida: día comprometido ------------------------------------
+
+const DAY_NAMES_ES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+
+export interface NextRideOption {
+  /** Medianoche local del día elegido. */
+  dayStartMs: number;
+  label: string;
+}
+
+function dayStart(ms: number): number {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/** Tres días a elegir al terminar: mañana, pasado y el siguiente, con su nombre. */
+export function nextRideOptions(nowMs: number): NextRideOption[] {
+  const today = dayStart(nowMs);
+  return [1, 2, 3].map((offset) => {
+    const dayStartMs = dayStart(today + offset * DAY_MS + DAY_MS / 2);
+    const name = DAY_NAMES_ES[new Date(dayStartMs).getDay()] ?? '';
+    return { dayStartMs, label: offset === 1 ? `Mañana, ${name}` : `El ${name}` };
+  });
+}
+
+export type NextRideState = 'none' | 'today' | 'upcoming' | 'missed';
+
+export interface NextRideStatus {
+  state: NextRideState;
+  /** Lo que dice el campamento. */
+  label: string;
+}
+
+/** Qué dice el campamento del día comprometido: hoy, viene, pasó, o nada. */
+export function nextRideStatus(nextDayMs: number | undefined, nowMs: number): NextRideStatus {
+  if (nextDayMs === undefined) return { state: 'none', label: '' };
+  const today = dayStart(nowMs);
+  const target = dayStart(nextDayMs);
+  const name = DAY_NAMES_ES[new Date(target).getDay()] ?? '';
+  if (target === today) return { state: 'today', label: 'Te esperan hoy.' };
+  if (target > today) {
+    return { state: 'upcoming', label: target - today === DAY_MS ? 'Te esperan mañana.' : `Te esperan el ${name}.` };
+  }
+  return { state: 'missed', label: `El ${name} pasó. La horda sigue ahí; cuando quieras.` };
+}
+
+// ---- revisión semanal --------------------------------------------------------
+
+export interface WeeklyReview {
+  lastWeek: WeekSummary;
+  previousWeek: WeekSummary;
+  streak: number;
+  /** Mediana del reposo del ritual en cada semana, si hubo lecturas. */
+  restLastWeekBpm: number | undefined;
+  restPreviousWeekBpm: number | undefined;
+  /** Lo que el plan propone para la semana que empieza. */
+  plan: Recommendation;
+}
+
+/** La primera vez que se abre la app en una semana nueva, si ya hay historial. */
+export function weeklyReviewDue(
+  sessions: readonly SessionRecord[],
+  lastReviewWeekMs: number | undefined,
+  nowMs: number,
+): boolean {
+  if (sessions.length === 0) return false;
+  const current = weekStartMs(nowMs);
+  if (lastReviewWeekMs === current) return false;
+  // Solo si la semana pasada tuvo algo que contar (o la anterior): tras un
+  // mes sin salir, lo primero no es una revisión.
+  const lastStart = previousWeekStart(current);
+  return sessions.some((s) => {
+    const w = weekStartMs(s.startedAtMs);
+    return w === lastStart || w === previousWeekStart(lastStart);
+  });
+}
+
+export function weeklyReview(sessions: readonly SessionRecord[], nowMs: number): WeeklyReview {
+  const current = weekStartMs(nowMs);
+  const lastStart = previousWeekStart(current);
+  const prevStart = previousWeekStart(lastStart);
+  const restOf = (weekStart: number): number | undefined => {
+    const readings = sessions
+      .filter((s) => weekStartMs(s.startedAtMs) === weekStart)
+      .map((s) => s.preRideRestBpm)
+      .filter((bpm): bpm is number => bpm !== undefined && bpm > 0);
+    return readings.length > 0 ? Math.round(median(readings)) : undefined;
+  };
+  return {
+    lastWeek: summarizeWeek(sessions, lastStart),
+    previousWeek: summarizeWeek(sessions, prevStart),
+    streak: streakWeeks(sessions, nowMs),
+    restLastWeekBpm: restOf(lastStart),
+    restPreviousWeekBpm: restOf(prevStart),
+    plan: recommendToday(sessions, nowMs),
+  };
+}
+
 // ---- el ritual de salida: reposo del día y disposición ---------------------
 
-export type Readiness = 'unknown' | 'normal' | 'elevated';
+/** 'rest': tan por encima de lo normal que hoy toca descansar, no aflojar. */
+export type Readiness = 'unknown' | 'normal' | 'elevated' | 'rest';
 
 export interface ReadinessVerdict {
   state: Readiness;
@@ -388,6 +563,8 @@ export interface ReadinessVerdict {
 export const READINESS_MIN_READINGS = 3;
 /** Un reposo esta cantidad por encima de lo normal es señal de fatiga o de que algo se incuba. */
 export const ELEVATED_REST_BPM = 8;
+/** Y esta cantidad ya no es para aflojar: es para no salir hoy. */
+export const REST_DAY_BPM = 12;
 const BASELINE_READINGS = 7;
 
 /** Lecturas de reposo del ritual (las que existan), de la más antigua a la más reciente. */
@@ -417,7 +594,9 @@ export function readiness(sessions: readonly SessionRecord[], todayBpm: number):
   const baselineBpm = restBaseline(sessions);
   if (baselineBpm === undefined || todayBpm <= 0) return { state: 'unknown', baselineBpm, deltaBpm: undefined };
   const deltaBpm = Math.round(todayBpm - baselineBpm);
-  return { state: deltaBpm >= ELEVATED_REST_BPM ? 'elevated' : 'normal', baselineBpm, deltaBpm };
+  const state: Readiness =
+    deltaBpm >= REST_DAY_BPM ? 'rest' : deltaBpm >= ELEVATED_REST_BPM ? 'elevated' : 'normal';
+  return { state, baselineBpm, deltaBpm };
 }
 
 // ---- mejorar: los tres números que un pulsómetro sí puede dar ---------------

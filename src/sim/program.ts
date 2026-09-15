@@ -8,7 +8,8 @@ import { ceilingEffort, floorEffort, zoneRange, type ZoneRange } from './zones';
 // alcancen) y por encima del techo la ventaja no crece (pasarse en un tramo
 // suave no es entrenar mejor). Los tipos calcan el esquema JSON del contrato.
 
-export type SpeedSegmentKind = 'warmup' | 'surge' | 'recover' | 'steady' | 'cooldown';
+/** 'push' es el empujón opcional que el rider acepta a mitad de un fondo. */
+export type SpeedSegmentKind = 'warmup' | 'surge' | 'recover' | 'steady' | 'cooldown' | 'push';
 
 export interface SpeedSegment {
   kind: SpeedSegmentKind;
@@ -19,6 +20,8 @@ export interface SpeedSegment {
   zombieSpeedKph?: number;
   /** Sugerencia de resistencia para el rider al entrar al segmento. */
   cueResistance?: number;
+  /** Consigna en texto al entrar al tramo, en cualquier modo ("sube resistencia, cadencia baja"). */
+  cue?: string;
 }
 
 export interface RepeatSegment {

@@ -1,4 +1,5 @@
 import type { TrainingProgram } from '../program';
+import { CUESTAS } from './cuestas';
 import { EMPUJONES } from './empujones';
 import { FONDO } from './fondo';
 import { OLEADAS } from './oleadas';
@@ -66,7 +67,17 @@ export const PROGRAM_CATALOG: readonly CatalogEntry[] = [
   {
     program: FONDO,
     description: 'Ritmo aerobio sostenido con un tramo de tempo al medio.',
-    adjustments: [warmupMin(5), mainMin(25, 10, 40)],
+    adjustments: [warmupMin(5), mainMin(25, 10, 45)],
+  },
+  {
+    program: CUESTAS,
+    description: 'Cuatro cuestas: resistencia arriba, cadencia baja. Fuerza en Z2-Z3.',
+    adjustments: [
+      { id: 'repeats', label: 'Cuestas', min: 3, max: 6, step: 1, defaultValue: 4, unit: '' },
+      warmupMin(5),
+      // El único 'steady' es la cuesta: mainMin es la duración de cada una.
+      { id: 'mainMin', label: 'Cada cuesta', min: 2, max: 5, step: 1, defaultValue: 3, unit: 'min' },
+    ],
   },
   {
     program: EMPUJONES,

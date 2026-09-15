@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import type { SessionRecord } from './history';
 import {
   brokenRecords,
+  empujonesClean,
   healthTrends,
+  lastTwoTooHard,
+  metWeeks,
+  nextRideOptions,
+  nextRideStatus,
   personalRecords,
   preRideRestReadings,
   readiness,
@@ -14,6 +19,8 @@ import {
   streakWeeks,
   streakWeeksBefore,
   summarizeWeek,
+  weeklyReview,
+  weeklyReviewDue,
   weekStartMs,
 } from './progress';
 
@@ -189,14 +196,23 @@ describe('personalRecords y brokenRecords', () => {
   });
 });
 
+/** Unos Empujones completos sin captura en los tramos suaves: la evidencia que pide la rotación. */
+const CLEAN_EMPUJONES: Partial<SessionRecord> = {
+  programId: 'empujones',
+  programName: 'Empujones',
+  target: 'tempo',
+  timesCaught: 1,
+  timesCaughtInEasy: 0,
+};
+
 describe('recommendToday: el plan por fases', () => {
   const metWeek = (weeksAgo: number) => [
     ride(weeksAgo * 7 + 0),
-    ride(weeksAgo * 7 + 1),
+    ride(weeksAgo * 7 + 1, CLEAN_EMPUJONES),
     ride(weeksAgo * 7 + 2),
   ];
-  /** n salidas repartidas en semanas pasadas (cada dos días desde hace una semana). */
-  const spread = (n: number) => Array.from({ length: n }, (_, i) => ride(7 + i * 2));
+  /** n salidas repartidas en semanas pasadas (cada dos días desde hace una semana), con unos Empujones limpios. */
+  const spread = (n: number) => Array.from({ length: n }, (_, i) => ride(7 + i * 2, i === 1 ? CLEAN_EMPUJONES : {}));
 
   it('quien empieza recibe la primera salida dos veces', () => {
     expect(recommendToday([], NOW)).toMatchObject({ phase: 'arranque', programId: 'primera-salida' });
@@ -258,6 +274,118 @@ describe('recommendToday: el plan por fases', () => {
     const today = [...twelve, ride(0)];
     expect(recommendToday(today, NOW)).toMatchObject({ programId: 'recuperacion', values: { mainMin: 10 } });
   });
+
+  it('la rotación se gana: sin dos semanas cumplidas o sin unos Empujones limpios, sigue en base', () => {
+    // Doce salidas apretadas en una sola semana cumplida: falta la segunda.
+    const oneWeek = Array.from({ length: 12 }, (_, i) => ride(3 + (i % 7), i === 1 ? CLEAN_EMPUJONES : {})); // lunes a domingo pasados
+    expect(metWeeks(oneWeek, NOW)).toBe(1);
+    const held = recommendToday(oneWeek, NOW);
+    expect(held.phase).toBe('base');
+    expect(held.reason).toContain('dos semanas cumplidas');
+    // Doce salidas en varias semanas pero sin Empujones limpios.
+    const noEmpujones = Array.from({ length: 12 }, (_, i) => ride(7 + i * 2));
+    expect(empujonesClean(noEmpujones)).toBe(false);
+    const held2 = recommendToday(noEmpujones, NOW);
+    expect(held2.phase).toBe('base');
+    expect(held2.reason).toContain('Empujones');
+    // Con las dos cosas, rotación.
+    expect(recommendToday(spread(12), NOW).phase).toBe('rotacion');
+    // Unos Empujones con capturas en los tramos suaves no valen como evidencia.
+    const caughtInEasy = Array.from({ length: 12 }, (_, i) =>
+      ride(7 + i * 2, i === 1 ? { ...CLEAN_EMPUJONES, timesCaughtInEasy: 2 } : {}),
+    );
+    expect(empujonesClean(caughtInEasy)).toBe(false);
+  });
+
+  it('dos salidas seguidas "demasiado" repiten la fase anterior con menos volumen', () => {
+    const twelve = spread(12);
+    const tired = [...twelve.slice(0, -2), ...twelve.slice(-2).map((s) => ({ ...s, rpe: 'hard' as const }))];
+    expect(lastTwoTooHard(tired)).toBe(true);
+    const r = recommendToday(tired, NOW);
+    expect(r.phase).toBe('base');
+    expect(r.reason).toContain('demasiado');
+    expect(r.values.mainMin).toBe(Math.round(22 * 0.8));
+    // Una sola "demasiado" no cambia nada.
+    const once = [...twelve.slice(0, -1), { ...twelve[11]!, rpe: 'hard' as const }];
+    expect(lastTwoTooHard(once)).toBe(false);
+    expect(recommendToday(once, NOW).phase).toBe('rotacion');
+  });
+
+  it('el volumen sigue creciendo: tope 25 en base, 35 en rotación y 45 con ocho semanas cumplidas seguidas', () => {
+    expect(recommendToday(spread(11), NOW).values.mainMin).toBe(21);
+    const eleven = Array.from({ length: 11 }, (_, i) => ride(7 + i * 2)); // sin Empujones: se queda en base
+    expect(recommendToday([...eleven, ...Array.from({ length: 10 }, (_, i) => ride(30 + i * 2))], NOW).values.mainMin).toBe(25);
+    expect(recommendToday(spread(30), NOW).values.mainMin).toBe(35);
+    // Ocho semanas cumplidas seguidas antes de esta (la novena sería descarga; la décima no).
+    const ten = Array.from({ length: 10 }, (_, w) => metWeek(w + 1)).flat();
+    const r = recommendToday(ten, NOW);
+    expect(streakWeeksBefore(ten, NOW)).toBe(10);
+    expect(r.phase).toBe('rotacion');
+    expect(r.values.mainMin).toBe(40); // 10 + 30 salidas, tope 45
+    const thirteen = Array.from({ length: 13 }, (_, w) => metWeek(w + 1)).flat();
+    expect(recommendToday(thirteen, NOW).values.mainMin).toBe(45);
+  });
+
+  it('cuestas cada tercera semana desde la salida 18; umbral y pirámide con más base, por semanas', () => {
+    // Semana +2: índice de semana ≡ 2 (mod 3) → la primera de la semana son cuestas.
+    const cuestas = recommendToday(spread(20), NOW + 14 * DAY);
+    expect(cuestas).toMatchObject({ phase: 'rotacion', programId: 'cuestas', values: { mainMin: 4 } });
+    expect(recommendToday(spread(16), NOW + 14 * DAY).programId).toBe('fondo'); // antes de la 18, no
+    // Semana +3: índice ≡ 1 (mod 2) → la dura es la pirámide (con 24 salidas).
+    const piramide = recommendToday([...spread(24), ride(-19, { target: 'aerobic' })], NOW + 21 * DAY);
+    expect(piramide.programId).toBe('piramide');
+    // Semana +5: índice ≡ 3 (mod 4) → la dura es el umbral.
+    const umbral = recommendToday([...spread(24), ride(-33, { target: 'aerobic' })], NOW + 35 * DAY);
+    expect(umbral.programId).toBe('umbral');
+  });
+});
+
+describe('la próxima salida con día', () => {
+  it('ofrece mañana, pasado y el siguiente, con su nombre', () => {
+    const options = nextRideOptions(NOW); // miércoles
+    expect(options.map((o) => o.label)).toEqual(['Mañana, jueves', 'El viernes', 'El sábado']);
+    expect(new Date(options[0]!.dayStartMs).getHours()).toBe(0);
+  });
+
+  it('el campamento dice si es hoy, si viene o si pasó', () => {
+    const [tomorrow, friday] = nextRideOptions(NOW);
+    expect(nextRideStatus(undefined, NOW).state).toBe('none');
+    expect(nextRideStatus(tomorrow!.dayStartMs, NOW)).toEqual({ state: 'upcoming', label: 'Te esperan mañana.' });
+    expect(nextRideStatus(friday!.dayStartMs, NOW)).toEqual({ state: 'upcoming', label: 'Te esperan el viernes.' });
+    expect(nextRideStatus(tomorrow!.dayStartMs, NOW + DAY).state).toBe('today');
+    expect(nextRideStatus(tomorrow!.dayStartMs, NOW + 3 * DAY)).toMatchObject({ state: 'missed' });
+    expect(nextRideStatus(tomorrow!.dayStartMs, NOW + 3 * DAY).label).toContain('jueves');
+  });
+});
+
+describe('la revisión semanal', () => {
+  it('toca la primera vez que se abre la app en una semana nueva con algo que contar', () => {
+    const sessions = [ride(3), ride(5), ride(8)];
+    expect(weeklyReviewDue([], undefined, NOW)).toBe(false);
+    expect(weeklyReviewDue(sessions, undefined, NOW)).toBe(true);
+    expect(weeklyReviewDue(sessions, weekStartMs(NOW), NOW)).toBe(false);
+    expect(weeklyReviewDue(sessions, weekStartMs(NOW - 7 * DAY), NOW)).toBe(true);
+    // Tras un mes sin salir, lo primero no es una revisión.
+    expect(weeklyReviewDue([ride(40)], undefined, NOW)).toBe(false);
+  });
+
+  it('resume la semana pasada contra la anterior, la racha, el reposo y el plan', () => {
+    const sessions = [
+      ride(16, { preRideRestBpm: 66 }),
+      ride(14, { preRideRestBpm: 68 }),
+      ride(12, { preRideRestBpm: 67 }),
+      ride(9, { preRideRestBpm: 64 }),
+      ride(7, { preRideRestBpm: 62 }),
+      ride(5, { preRideRestBpm: 63 }),
+    ];
+    const review = weeklyReview(sessions, NOW);
+    expect(review.lastWeek.sessions).toBe(3);
+    expect(review.previousWeek.sessions).toBe(3);
+    expect(review.restLastWeekBpm).toBe(63);
+    expect(review.restPreviousWeekBpm).toBe(67);
+    expect(review.streak).toBe(2);
+    expect(review.plan.programId).toBeTruthy();
+  });
 });
 
 describe('readiness: el reposo del ritual contra lo normal', () => {
@@ -274,9 +402,10 @@ describe('readiness: el reposo del ritual contra lo normal', () => {
     expect(restBaseline(many)).toBe(65); // el 90 antiguo queda fuera de las últimas siete
   });
 
-  it('ocho latidos por encima es "elevado"; menos, normal', () => {
+  it('ocho latidos por encima es "elevado"; doce, descanso; menos, normal', () => {
     const base = [withRest(6, 64), withRest(4, 66), withRest(2, 65)];
     expect(readiness(base, 73)).toEqual({ state: 'elevated', baselineBpm: 65, deltaBpm: 8 });
+    expect(readiness(base, 77)).toEqual({ state: 'rest', baselineBpm: 65, deltaBpm: 12 });
     expect(readiness(base, 71)).toEqual({ state: 'normal', baselineBpm: 65, deltaBpm: 6 });
     expect(readiness(base, 58).state).toBe('normal');
   });

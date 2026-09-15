@@ -32,10 +32,15 @@ export interface SegmentInfo {
   zoneMin: number;
   zoneMax: number;
   remainingSec: number;
+  /** Consigna del tramo para el rider (resistencia, enfriamiento, empujón). */
+  cue?: string;
   waveNumber?: number;
   waveTotal?: number;
   next?: SegmentNextInfo;
 }
+
+/** Cómo le pareció la salida al rider, preguntado al terminar. */
+export type RideRpe = 'easy' | 'right' | 'hard';
 
 export interface SimState {
   elapsedSec: number;
@@ -54,6 +59,12 @@ export interface SimState {
   effortFrac: number;
   /** Por encima del techo de zona del tramo: la ventaja está congelada. */
   aboveZone: boolean;
+  /** Pulso pasado del máximo del perfil: la horda está congelada y toca aflojar. */
+  easeOff: boolean;
+  /** Enfriamiento tras Terminar: la horda parada, el programa acaba en breve. */
+  coolingDown: boolean;
+  /** Se puede insertar el empujón opcional ahora (tramo continuo, aún no usado). */
+  pushAvailable: boolean;
   playerSpeedKph: number;
   /** Velocidad efectiva de la horda (con rampa y tropiezo aplicados). */
   zombieSpeedKph: number;
@@ -87,12 +98,17 @@ export interface RideSummary {
    * honesto que da un pulsómetro solo.
    */
   recoveryDrops: readonly number[];
+  /** Ventaja (m) cada gapTraceStepSec: con ella la próxima vez corre tu fantasma. */
+  gapTrace: readonly number[];
 }
 
 export type SimEvent =
   | { type: 'caught'; healthPct: number }
   | { type: 'segmentChanged'; index: number; segment: ExpandedSegment }
   | { type: 'surgeWarning'; inSec: number; toKph: number }
+  | { type: 'overMax' }
+  | { type: 'sustainedHigh'; sec: number }
+  | { type: 'pushDone'; bonusM: number }
   | { type: 'staleCadence' }
   | { type: 'staleHeartRate' }
   | { type: 'healthDepleted' }

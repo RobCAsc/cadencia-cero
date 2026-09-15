@@ -15,6 +15,7 @@ const summary: RideSummary = {
   inZoneSec: 900,
   aboveZoneSec: 60,
   recoveryDrops: [18, 21],
+  gapTrace: [50, 58, 66],
 };
 
 describe('toSessionRecord', () => {
@@ -35,6 +36,24 @@ describe('toSessionRecord', () => {
     expect(record.recoveryDrops).toEqual([18, 21]);
     expect(record.hrRestBpm).toBe(58);
     expect(record.completed).toBe(true);
+    expect(record.timesCaughtInEasy).toBe(0);
+    expect(record.gapTrace).toEqual([50, 58, 66]);
+    expect(record.rpe).toBeUndefined();
+  });
+
+  it('guarda lo que dijo el rider al terminar', () => {
+    const record = toSessionRecord({
+      startedAtMs: 1,
+      program: { id: 'p', name: 'P', target: 't' },
+      plannedSec: 10,
+      inputMode: 'feel',
+      completed: true,
+      summary,
+      hrRestBpm: 60,
+      rpe: 'hard',
+    });
+    expect(record.rpe).toBe('hard');
+    expect(record.inputMode).toBe('feel');
   });
 
   it('copia las zonas: mutar el resumen después no toca el registro', () => {

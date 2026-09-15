@@ -135,11 +135,12 @@ export interface StepResult {
 }
 
 /**
- * La escalera: tres escalones de dos minutos. Primero entrar en calor (no
- * cuenta), luego un ritmo en el que hablas sin problema, luego uno en el que
- * no puedes hablar. De cada escalón útil se toma la media de su cola, cuando
- * el pulso ya alcanzó al esfuerzo. Dos anclas del habla, que es lo que la
- * fisiología sí sabe leer sin potenciómetro.
+ * La escalera: entrar en calor (cuatro minutos, no cuenta), luego dos minutos
+ * a un ritmo en el que hablas sin problema, luego dos en el que no puedes
+ * hablar. De cada escalón útil se toma la media de su cola, cuando el pulso
+ * ya alcanzó al esfuerzo. Dos anclas del habla, que es lo que la fisiología
+ * sí sabe leer sin potenciómetro. El calor es largo a propósito: el escalón
+ * fuerte no se pide en frío.
  */
 export class StepTest {
   private readonly easyTail: SampleWindow;
@@ -151,19 +152,27 @@ export class StepTest {
     private readonly stageSec = 120,
     easyTailSec = 60,
     hardTailSec = 45,
+    private readonly warmSec = 240,
   ) {
     this.easyTail = new SampleWindow(easyTailSec * 1000);
     this.hardTail = new SampleWindow(hardTailSec * 1000);
   }
 
   get totalSec(): number {
-    return this.stageSec * 3;
+    return this.warmSec + this.stageSec * 2;
   }
 
   stageAt(elapsedSec: number): StepStage {
-    if (elapsedSec < this.stageSec) return 'warm';
-    if (elapsedSec < this.stageSec * 2) return 'easy';
+    if (elapsedSec < this.warmSec) return 'warm';
+    if (elapsedSec < this.warmSec + this.stageSec) return 'easy';
     return 'hard';
+  }
+
+  /** Cuándo termina cada escalón, en segundos desde el inicio. */
+  private stageEndSec(stage: StepStage): number {
+    if (stage === 'warm') return this.warmSec;
+    if (stage === 'easy') return this.warmSec + this.stageSec;
+    return this.totalSec;
   }
 
   push(sample: HeartRateSample): void {
@@ -179,12 +188,11 @@ export class StepTest {
   progress(nowMs: number): StepProgress {
     const elapsedSec = this.startMs === undefined ? 0 : (nowMs - this.startMs) / 1000;
     const stage = this.stageAt(elapsedSec);
-    const stageIndex = stage === 'warm' ? 0 : stage === 'easy' ? 1 : 2;
     return {
       elapsedSec,
       remainingSec: Math.max(0, this.totalSec - elapsedSec),
       stage,
-      stageRemainingSec: Math.max(0, this.stageSec * (stageIndex + 1) - elapsedSec),
+      stageRemainingSec: Math.max(0, this.stageEndSec(stage) - elapsedSec),
       liveBpm: this.lastBpm,
       done: elapsedSec >= this.totalSec,
     };

@@ -14,10 +14,15 @@ import {
   withRest,
   hrMaxFromStepTest,
   MAX_AGE_TOLERANCE_BPM,
+  PEAK_RAISE_PER_RIDE_BPM,
+  STEP_RETEST_DAYS,
+  stepTestDue,
   withRitualRest,
   withStepTest,
 } from './riderProfile';
 import type { RideSummary } from './types';
+
+const DAY_MS = 86_400_000;
 
 const summary = (over: Partial<RideSummary> = {}): RideSummary => ({
   durationSec: 1200,
@@ -32,6 +37,7 @@ const summary = (over: Partial<RideSummary> = {}): RideSummary => ({
   inZoneSec: 1200,
   aboveZoneSec: 0,
   recoveryDrops: [],
+  gapTrace: [],
   ...over,
 });
 
@@ -59,20 +65,33 @@ describe('perfil del rider', () => {
     expect(p.hrMaxBpm).toBe(hrMaxFromAnchor(54, 144));
   });
 
-  it('un pico sostenido mayor que el máximo lo sube; uno menor solo se anota', () => {
+  it('un pico sostenido mayor que el máximo lo sube, pero como mucho tres latidos por salida; uno menor solo se anota', () => {
     const base = withAnchor(defaultRiderProfile(33), 144); // máx 180
     const low = withObservedPeak(base, 170);
     expect(low.raised).toBe(false);
     expect(low.profile).toMatchObject({ hrMaxBpm: 180, observedPeakBpm: 170 });
     const high = withObservedPeak(base, 187);
     expect(high.raised).toBe(true);
-    expect(high.profile).toMatchObject({ hrMaxBpm: 187, hrMaxSource: 'observed', observedPeakBpm: 187 });
+    expect(high.profile).toMatchObject({
+      hrMaxBpm: 180 + PEAK_RAISE_PER_RIDE_BPM,
+      hrMaxSource: 'observed',
+      observedPeakBpm: 187,
+    });
+    const small = withObservedPeak(base, 182);
+    expect(small.profile.hrMaxBpm).toBe(182); // por debajo del tope, sube lo que hay
+  });
+
+  it('un pico de un día en que uno se pasó no endurece la siguiente salida: sin permiso solo se anota', () => {
+    const base = withAnchor(defaultRiderProfile(33), 144); // máx 180
+    const denied = withObservedPeak(base, 195, { allowRaise: false });
+    expect(denied.raised).toBe(false);
+    expect(denied.profile).toMatchObject({ hrMaxBpm: 180, hrMaxSource: 'anchor', observedPeakBpm: 195 });
   });
 
   it('un ancla posterior no baja un máximo observado mayor', () => {
-    const observed = withObservedPeak(defaultRiderProfile(33), 190).profile;
+    const observed = withObservedPeak(defaultRiderProfile(33), 190).profile; // 185 → 188
     const p = withAnchor(observed, 130); // derivaría 160
-    expect(p.hrMaxBpm).toBe(190);
+    expect(p.hrMaxBpm).toBe(188);
     expect(p.anchorBpm).toBe(130);
   });
 
@@ -106,11 +125,22 @@ describe('perfil del rider', () => {
     expect(hrMaxFromStepTest(33, 60, 170, 190)).toBe(185 + MAX_AGE_TOLERANCE_BPM); // saldría ~225
   });
 
-  it('un pico observado mayor sigue mandando sobre la escalera', () => {
-    const observed = withObservedPeak(defaultRiderProfile(33), 192).profile;
+  it('un máximo observado mayor sigue mandando sobre la escalera', () => {
+    const observed = withObservedPeak(defaultRiderProfile(33), 192).profile; // 185 → 188
     const p = withStepTest(observed, 130, 150);
-    expect(p.hrMaxBpm).toBe(192);
+    expect(p.hrMaxBpm).toBe(188);
     expect(p.hrMaxSource).toBe('observed');
+  });
+
+  it('la escalera anota cuándo se hizo y con qué reposo, y dice cuándo toca repetirla', () => {
+    const t0 = 1_800_000_000_000;
+    const p = withStepTest(defaultRiderProfile(33), 135, 162, t0);
+    expect(p).toMatchObject({ stepTestAtMs: t0, stepTestRestBpm: 60 });
+    expect(stepTestDue(defaultRiderProfile(33), t0)).toBe('never');
+    expect(stepTestDue(p, t0 + 10 * DAY_MS)).toBe('fresh');
+    expect(stepTestDue(p, t0 + (STEP_RETEST_DAYS + 1) * DAY_MS)).toBe('stale');
+    expect(stepTestDue(withRitualRest(p, 55), t0 + DAY_MS)).toBe('restDropped');
+    expect(stepTestDue(withRitualRest(p, 57), t0 + DAY_MS)).toBe('fresh');
   });
 
   it('el reposo del minuto de calma manda salvo que esté fijado a mano, y recalcula la escalera', () => {
@@ -129,19 +159,30 @@ describe('consejo de calibración', () => {
     expect(applyAdvice(defaultRiderProfile(), 'lower').intensityPct).toBe(5);
   });
 
-  it('sin capturas y esfuerzo medio bajo → subir (menos intensidad)', () => {
-    expect(calibrationAdvice(summary({ avgEffortFrac: 0.4 }))).toBe('raise');
+  it('sin capturas y esfuerzo medio bajo → subir (menos intensidad), solo si al rider le pareció fácil', () => {
+    expect(calibrationAdvice(summary({ avgEffortFrac: 0.4 }), 'easy')).toBe('raise');
+    expect(calibrationAdvice(summary({ avgEffortFrac: 0.4 }), 'right')).toBe('ok');
+    expect(calibrationAdvice(summary({ avgEffortFrac: 0.4 }))).toBe('ok');
     expect(applyAdvice(defaultRiderProfile(), 'raise').intensityPct).toBe(-5);
   });
 
   it('una sesión normal no toca nada', () => {
-    expect(calibrationAdvice(summary({ timesCaught: 2, timesCaughtInEasy: 1 }))).toBe('ok');
-    expect(calibrationAdvice(summary())).toBe('ok');
+    expect(calibrationAdvice(summary({ timesCaught: 2, timesCaughtInEasy: 1 }), 'right')).toBe('ok');
+    expect(calibrationAdvice(summary(), 'right')).toBe('ok');
+    expect(calibrationAdvice(summary(), 'easy')).toBe('ok');
   });
 
-  it('media salida por encima del techo sin capturas → subir, aunque el esfuerzo medio sea alto', () => {
-    expect(calibrationAdvice(summary({ avgEffortFrac: 0.7, aboveZoneSec: 700, durationSec: 1200 }))).toBe('raise');
-    expect(calibrationAdvice(summary({ avgEffortFrac: 0.7, aboveZoneSec: 500, durationSec: 1200 }))).toBe('ok');
-    expect(calibrationAdvice(summary({ timesCaught: 1, aboveZoneSec: 900, durationSec: 1200 }))).toBe('ok');
+  it('media salida por encima del techo sin capturas → subir, aunque el esfuerzo medio sea alto, con el rider de acuerdo', () => {
+    expect(calibrationAdvice(summary({ avgEffortFrac: 0.7, aboveZoneSec: 700, durationSec: 1200 }), 'easy')).toBe('raise');
+    expect(calibrationAdvice(summary({ avgEffortFrac: 0.7, aboveZoneSec: 700, durationSec: 1200 }))).toBe('ok');
+    expect(calibrationAdvice(summary({ avgEffortFrac: 0.7, aboveZoneSec: 500, durationSec: 1200 }), 'easy')).toBe('ok');
+    expect(calibrationAdvice(summary({ timesCaught: 1, aboveZoneSec: 900, durationSec: 1200 }), 'easy')).toBe('ok');
+  });
+
+  it('"demasiado" habiendo seguido la zona → bajar; "demasiado" sin haberla seguido no dice nada de las zonas', () => {
+    expect(calibrationAdvice(summary({ inZoneSec: 800 }), 'hard')).toBe('lower');
+    expect(calibrationAdvice(summary({ inZoneSec: 300 }), 'hard')).toBe('ok');
+    // Las capturas en tramos suaves mandan aunque el rider no conteste.
+    expect(calibrationAdvice(summary({ timesCaught: 3, timesCaughtInEasy: 2 }))).toBe('lower');
   });
 });
