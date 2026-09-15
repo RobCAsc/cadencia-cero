@@ -1,20 +1,24 @@
+import shiftUrl from '../../assets/sfx/bicycle-chain-gear-shift-sound-effect.mp3';
+import cyclingUrl from '../../assets/sfx/cycling.mp3';
+import ambientUrl from '../../assets/sfx/scary-ambient.mp3';
 import biteUrl from '../../assets/sfx/zombie-eating.mp3';
 import hordeUrl from '../../assets/sfx/zombie-horde.mp3';
 import moansUrl from '../../assets/sfx/zombie-idle-moans.mp3';
 import screamUrl from '../../assets/sfx/zombie-scream.mp3';
 import growlUrl from '../../assets/sfx/zombie-voice-growl.mp3';
 
-// Las voces de la horda son los únicos assets del juego: cinco clips cortos
-// en assets/sfx (Vite los emite con hash y el service worker los precachea).
-// Todo lo demás (viento, grillos, pájaros, drone, latido, trueno, el golpe
-// del catch) sigue sintetizado en WebAudio.
+// Los clips de assets/sfx son los únicos assets del juego: las voces de la
+// horda, el pedaleo y el cambio de marcha de tu bici, y una cama de ambiente
+// para la noche cerrada (Vite los emite con hash y el service worker los
+// precachea). Todo lo demás (viento, grillos, pájaros, drone, latido, trueno,
+// el golpe del catch) sigue sintetizado en WebAudio.
 //
 // Los bytes se piden al cargar el módulo, sin gesto de usuario; decodificar
 // necesita el AudioContext, que solo existe tras el toque de EMPEZAR, así
 // que `load(ctx)` se llama al arrancar la salida. Si un clip no llega o no
 // se puede decodificar, quien lo pida recibe undefined y usa su fallback.
 
-export type SfxName = 'moans' | 'growl' | 'horde' | 'scream' | 'bite';
+export type SfxName = 'moans' | 'growl' | 'horde' | 'scream' | 'bite' | 'cycling' | 'shift' | 'ambient';
 
 const URLS: Record<SfxName, string> = {
   moans: moansUrl,
@@ -22,6 +26,9 @@ const URLS: Record<SfxName, string> = {
   horde: hordeUrl,
   scream: screamUrl,
   bite: biteUrl,
+  cycling: cyclingUrl,
+  shift: shiftUrl,
+  ambient: ambientUrl,
 };
 
 export interface PlayOptions {
@@ -31,7 +38,10 @@ export interface PlayOptions {
   rate?: number;
   /** Instante absoluto (`ctx.currentTime`) en el que debe empezar; por defecto ya. */
   startAtSec?: number;
-  /** Fundidos, para clips cortados en seco. */
+  /** Trozo del clip: desde dónde y cuánto (segundos del clip, a velocidad 1). */
+  offsetSec?: number;
+  durationSec?: number;
+  /** Fundidos, para clips o trozos cortados en seco. */
   fadeInSec?: number;
   fadeOutSec?: number;
 }
@@ -82,8 +92,8 @@ class SfxBank {
   }
 
   /**
-   * Lanza un clip por `out` con su envolvente. Devuelve la fuente, o
-   * undefined si el clip no está disponible (todavía, o nunca).
+   * Lanza un clip (o un trozo) por `out` con su envolvente. Devuelve la
+   * fuente, o undefined si el clip no está disponible (todavía, o nunca).
    */
   play(
     ctx: AudioContext,
@@ -96,7 +106,10 @@ class SfxBank {
     const rate = opts.rate ?? 1;
     const gain = Math.max(0.0001, opts.gain ?? 1);
     const t0 = Math.max(ctx.currentTime, opts.startAtSec ?? ctx.currentTime);
-    const dur = buffer.duration / rate;
+    const offset = Math.min(buffer.duration, Math.max(0, opts.offsetSec ?? 0));
+    const clipSec = Math.min(buffer.duration - offset, opts.durationSec ?? buffer.duration);
+    if (clipSec <= 0) return undefined;
+    const dur = clipSec / rate;
     const fadeIn = Math.min(opts.fadeInSec ?? 0, dur / 2);
     const fadeOut = Math.min(opts.fadeOutSec ?? 0, dur / 2);
 
@@ -115,7 +128,7 @@ class SfxBank {
       env.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
     }
     src.connect(env).connect(out);
-    src.start(t0);
+    src.start(t0, offset, clipSec);
     src.stop(t0 + dur + 0.05);
     this.played += 1;
     return src;
@@ -123,6 +136,18 @@ class SfxBank {
 }
 
 export const sfx = new SfxBank();
+
+export interface LoopOptions {
+  /** Solape entre vueltas: cada una entra en fundido mientras la anterior se apaga. */
+  overlapSec: number;
+  /**
+   * Si se da, cada vuelta es un trozo de esta duración tomado desde un punto
+   * al azar dentro de `offsetRangeSec` (por defecto, desde el principio).
+   * Sirve para clips largos o con cola: el trozo cambia, la repetición se nota menos.
+   */
+  chunkSec?: number;
+  offsetRangeSec?: readonly [number, number];
+}
 
 /**
  * Un clip encadenado consigo mismo con solape: cada vuelta entra en fundido
@@ -139,15 +164,18 @@ export class CrossfadeLoop {
     private readonly ctx: AudioContext,
     private readonly name: SfxName,
     destination: AudioNode,
-    private readonly overlapSec: number,
+    private readonly opts: LoopOptions,
   ) {
     this.out = ctx.createGain();
     this.out.gain.value = 0;
     this.out.connect(destination);
   }
 
-  /** Nivel objetivo 0..1; por debajo de 0.01 deja de encadenar vueltas. */
-  update(level: number): void {
+  /**
+   * @param level nivel objetivo 0..1; por debajo de 0.01 deja de encadenar vueltas.
+   * @param rate velocidad para las vueltas nuevas; sin ella, una al azar cerca de 1.
+   */
+  update(level: number, rate?: number): void {
     const ctx = this.ctx;
     const now = ctx.currentTime;
     this.out.gain.setTargetAtTime(Math.max(0, level), now, 0.4);
@@ -163,12 +191,17 @@ export class CrossfadeLoop {
     // Programa con medio segundo de antelación; cada vuelta avanza el reloj
     // al menos varios segundos, así que el bucle siempre termina.
     while (this.nextAt < now + 0.5) {
-      const rate = 0.94 + Math.random() * 0.12;
-      const dur = buffer.duration / rate;
-      const overlap = Math.min(this.overlapSec, dur / 3);
+      const turnRate = rate ?? 0.94 + Math.random() * 0.12;
+      const [lo, hi] = this.opts.offsetRangeSec ?? [0, 0];
+      const offset = this.opts.chunkSec === undefined ? 0 : lo + Math.random() * Math.max(0, hi - lo);
+      const clipSec = Math.min(buffer.duration - offset, this.opts.chunkSec ?? buffer.duration);
+      const dur = clipSec / turnRate;
+      const overlap = Math.min(this.opts.overlapSec, dur / 3);
       const src = sfx.play(ctx, this.name, this.out, {
-        rate,
+        rate: turnRate,
         startAtSec: this.nextAt,
+        offsetSec: offset,
+        durationSec: clipSec,
         fadeInSec: overlap,
         fadeOutSec: overlap,
       });
@@ -178,7 +211,7 @@ export class CrossfadeLoop {
           this.sources = this.sources.filter((s) => s !== src);
         };
       }
-      this.nextAt = Math.max(this.nextAt, now) + dur - overlap;
+      this.nextAt = Math.max(this.nextAt, now) + Math.max(0.5, dur - overlap);
     }
   }
 

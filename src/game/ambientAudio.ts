@@ -1,12 +1,19 @@
 import { gameAudio } from './audio';
+import { CrossfadeLoop, sfx } from './sfx';
 
-// El fondo sonoro de la noche, sintetizado: viento con ráfagas, grillos en
-// la noche cerrada y pájaros cuando amanece. Todo muy bajo: es textura, no
-// música. Cero assets.
+// El fondo sonoro de la noche: viento con ráfagas, grillos en la noche
+// cerrada y pájaros cuando amanece, sintetizados; y una cama de ambiente
+// (scary-ambient.mp3 encadenado con solape) que solo se oye en noche cerrada
+// y se apaga con el amanecer. Todo muy bajo: es textura, no música.
 
 const WIND_GAIN = 0.035;
 const CRICKET_GAIN = 0.014;
 const BIRD_GAIN = 0.05;
+/** La cama viene muy alta (media −12 dB): aquí se deja como un rumor. */
+const BED_GAIN = 0.05;
+/** El clip dura 22,5 s y muere en los últimos dos: se encadena sin la cola. */
+const BED_CHUNK_SEC = 20;
+const BED_OVERLAP_SEC = 3;
 
 class AmbientAudio {
   private ctx: AudioContext | null = null;
@@ -18,6 +25,7 @@ class AmbientAudio {
   private nextCricketAt = 0;
   private nextBirdAt = 0;
   private dawn = 0;
+  private bed: CrossfadeLoop | null = null;
 
   start(): void {
     const ctx = gameAudio.context;
@@ -59,6 +67,13 @@ class AmbientAudio {
     cricketGain.connect(ctx.destination);
     this.cricketGain = cricketGain;
 
+    // La cama de ambiente, muda hasta que la noche cierra (ver update).
+    void sfx.load(ctx);
+    this.bed = new CrossfadeLoop(ctx, 'ambient', ctx.destination, {
+      overlapSec: BED_OVERLAP_SEC,
+      chunkSec: BED_CHUNK_SEC,
+    });
+
     this.nextCricketAt = ctx.currentTime + 1;
     this.nextBirdAt = 0;
     this.running = true;
@@ -74,6 +89,7 @@ class AmbientAudio {
     this.dawn = dawn01;
     this.cricketGain.gain.setTargetAtTime(CRICKET_GAIN * Math.max(0, night01), ctx.currentTime, 0.5);
     this.windGain.gain.setTargetAtTime(WIND_GAIN * (1 - dawn01 * 0.6), ctx.currentTime, 0.5);
+    this.bed?.update(BED_GAIN * Math.max(0, night01));
 
     if (night01 > 0.2 && ctx.currentTime >= this.nextCricketAt) {
       this.chirp();
@@ -90,6 +106,8 @@ class AmbientAudio {
     this.running = false;
     const ctx = this.ctx;
     if (ctx && this.windGain) this.windGain.gain.setTargetAtTime(0, ctx.currentTime, 0.2);
+    this.bed?.stop();
+    this.bed = null;
     if (ctx && this.cricketGain) this.cricketGain.gain.setTargetAtTime(0, ctx.currentTime, 0.2);
     const source = this.windSource;
     const lfo = this.windLfo;

@@ -23,6 +23,7 @@ import { Cyclist } from '../actors/Cyclist';
 import { Horde } from '../actors/Horde';
 import { ambientAudio } from '../ambientAudio';
 import { gameAudio } from '../audio';
+import { bikeAudio } from '../bikeAudio';
 import { Effects, ensureVignette } from '../effects';
 import { proximityAudio } from '../proximityAudio';
 import { CueBanner } from '../hud/CueBanner';
@@ -95,6 +96,7 @@ export class RideScene extends Phaser.Scene {
     this.add.image(0, 0, 'fx-vignette').setOrigin(0, 0).setDepth(5);
     proximityAudio.start();
     ambientAudio.start();
+    bikeAudio.start();
 
     this.hud = new Hud(this, { segments: expandProgram(program), onQuit: () => this.quitRide() });
     this.banner = new CueBanner(this, (finalPip) => gameAudio.playPip(finalPip));
@@ -125,6 +127,7 @@ export class RideScene extends Phaser.Scene {
       this.calm?.destroy();
       proximityAudio.stop();
       ambientAudio.stop();
+      bikeAudio.stop();
     });
 
     // El ritual: un minuto de calma antes de salir. Solo en modo pulso, y
@@ -204,6 +207,7 @@ export class RideScene extends Phaser.Scene {
     const summary = this.sim.summary();
     const record = this.recordSession(summary, false);
     proximityAudio.stop();
+    bikeAudio.stop();
     this.showFinished(summary, record, false);
   }
 
@@ -247,6 +251,7 @@ export class RideScene extends Phaser.Scene {
         }
         break;
       case 'segmentChanged':
+        if (!fastForward) bikeAudio.shift();
         if (event.segment.kind === 'surge') {
           this.banner.showNotice('¡¡OLEADA!!', 2500, UI.danger);
           if (!fastForward) proximityAudio.charge();
@@ -269,6 +274,7 @@ export class RideScene extends Phaser.Scene {
         break;
       case 'finished': {
         proximityAudio.stop();
+        bikeAudio.stop();
         const record = this.recordSession(event.summary, true);
         this.showFinished(event.summary, record, true);
         break;
@@ -366,6 +372,7 @@ export class RideScene extends Phaser.Scene {
     this.effects.update(state.playerSpeedKph / 3.6, dt, night01, danger01);
     this.effects.updateHorde(this.horde.screenX, this.horde.run01);
     proximityAudio.update(state.gapM, this.horde.run01, dt);
+    bikeAudio.update(state.playerSpeedKph);
     ambientAudio.update(night01, Math.max(0, Math.min(1, (progress - 0.88) / 0.12)));
 
     // La cámara se acerca un pelín cuando los tienes encima y se balancea

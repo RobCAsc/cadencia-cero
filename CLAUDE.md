@@ -121,7 +121,11 @@ Deliberately excluded (decided 2026-09-13): cosmetic unlockables, XP, levels. Th
 
 ## Sound
 
-Everything is synthesized in WebAudio (wind, crickets, birds, the proximity drone and heartbeat, thunder, the catch hit) except the horde's voices: five short clips in `assets/sfx` that the rider supplied on 2026-09-14 (idle moans, a voiced growl, the running horde, a scream, a bite). `src/game/sfx.ts` fetches them at load, decodes them once the AudioContext exists, and plays them with envelopes; `src/game/proximityAudio.ts` puts them on one horde bus panned slightly left, because the horde is behind. Moans and growls come by closeness, the running clip is chained with a crossfade and follows `Horde.run01`, the scream marks the start of a surge and the catch, the bite the catch. They are the only binary assets in the game; art stays by code. If a clip fails to load, the synthesized groan takes its place.
+Everything is synthesized in WebAudio (wind, crickets, birds, the proximity drone and heartbeat, thunder, the catch hit) except eight short clips in `assets/sfx` that the rider supplied on 2026-09-14. They are the only binary assets in the game; art stays by code. `src/game/sfx.ts` fetches them at load, decodes them once the AudioContext exists, plays them (or a window of them) with envelopes, and chains a clip with itself through a crossfade (`CrossfadeLoop`) when something has to sound continuous. If a clip fails to load, the synthesized version takes its place where one exists, or it stays silent.
+
+- **The horde** (`src/game/proximityAudio.ts`): one bus panned slightly left, because the horde is behind. Moans and voiced growls come by closeness, the running clip follows `Horde.run01`, the scream marks the start of a surge and the catch, the bite the catch.
+- **The bike** (`src/game/bikeAudio.ts`): six-second windows of the pedalling clip chained with a crossfade, volume and pitch by the rider's speed (silent when stopped), and a short window of the chain clip as a gear shift when a new segment starts.
+- **The night** (`src/game/ambientAudio.ts`): the ambient bed is chained without its tail, kept very low, follows `night01` and dies at dawn, under the synthesized wind and crickets.
 
 ## Anti-goals
 

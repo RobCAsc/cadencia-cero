@@ -75,7 +75,7 @@ class ProximityAudio {
     bus.connect(pan).connect(ctx.destination);
     this.hordeBus = bus;
     this.hordePan = pan;
-    this.runLoop = new CrossfadeLoop(ctx, 'horde', bus, RUN_LOOP_OVERLAP_SEC);
+    this.runLoop = new CrossfadeLoop(ctx, 'horde', bus, { overlapSec: RUN_LOOP_OVERLAP_SEC });
 
     this.droneGain = gain;
     this.nextBeatAt = 0;
