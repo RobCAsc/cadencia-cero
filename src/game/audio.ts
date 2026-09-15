@@ -1,5 +1,5 @@
 /**
- * Sintetizador WebAudio de placeholder: cero assets. El AudioContext se crea y
+ * Sintetizador WebAudio: sin assets salvo las voces de la horda (ver sfx.ts). El AudioContext se crea y
  * resume en el gesto del botón EMPEZAR (misma política de gesto que exigirá
  * requestDevice() en Fase 1).
  */

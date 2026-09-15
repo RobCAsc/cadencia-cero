@@ -1,19 +1,47 @@
 import { gameAudio } from './audio';
+import { CrossfadeLoop, sfx } from './sfx';
 
-// La banda sonora de la persecución es tu propio pulso: un drone grave que
-// crece cuando la horda se acerca, un latido que acelera bajo los 30 m, y
-// gruñidos sueltos que llegan de la manada cuanto más cerca está.
-// Sintetizado en WebAudio, cero assets.
+// La banda sonora de la persecución. Lo tuyo va sintetizado: un drone grave
+// que crece cuando la horda se acerca y un latido que acelera bajo los 30 m.
+// La horda habla con los clips de assets/sfx: gemidos sueltos cuanto más
+// cerca está, gruñidos con voz cuando ya la tienes encima, la manada
+// corriendo cuando corre, un alarido cuando carga y un mordisco al alcanzarte.
+// Todo lo de la horda pasa por un bus propio, un pelín a la izquierda: viene
+// por detrás. Sin clips (aún no decodificados, o sin red la primera vez),
+// queda el gruñido sintetizado.
 
 const DRONE_MAX_GAIN = 0.055;
 const DRONE_RANGE_M = 60;
 const HEARTBEAT_RANGE_M = 30;
 const GROAN_RANGE_M = 70;
 
+/** Ganancia del bus de la horda: los clips vienen normalizados cerca de 0 dBFS. */
+const HORDE_BUS_GAIN = 0.55;
+/** Paneo del bus (−1 izquierda): lejos viene claramente por detrás, encima casi centrado. */
+const PAN_FAR = -0.5;
+const PAN_NEAR = -0.1;
+/** Ganancias [lejos, encima] de cada voz, sobre el bus. */
+const MOAN_GAIN: readonly [number, number] = [0.12, 0.4];
+const GROWL_GAIN: readonly [number, number] = [0.25, 0.7];
+/** Los gruñidos con voz solo a partir de esta cercanía (0..1). */
+const GROWL_FROM_NEAR = 0.45;
+/** La manada corriendo: por la carrera de la horda, y más cuanto más cerca. */
+const RUN_LOOP_GAIN = 0.7;
+const RUN_LOOP_OVERLAP_SEC = 1.5;
+const SCREAM_CHARGE_GAIN = 0.4;
+const SCREAM_CATCH_GAIN = 0.8;
+const BITE_GAIN = 0.75;
+
+const lerp = (range: readonly [number, number], k: number): number =>
+  range[0] + (range[1] - range[0]) * k;
+
 class ProximityAudio {
   private ctx: AudioContext | null = null;
   private droneGain: GainNode | null = null;
   private oscillators: OscillatorNode[] = [];
+  private hordeBus: GainNode | null = null;
+  private hordePan: StereoPannerNode | null = null;
+  private runLoop: CrossfadeLoop | null = null;
   private nextBeatAt = 0;
   private nextGroanAt = 0;
   private running = false;
@@ -22,6 +50,7 @@ class ProximityAudio {
     const ctx = gameAudio.context;
     if (!ctx || this.running) return;
     this.ctx = ctx;
+    void sfx.load(ctx);
 
     const gain = ctx.createGain();
     gain.gain.value = 0;
@@ -39,13 +68,26 @@ class ProximityAudio {
       return osc;
     });
 
+    const bus = ctx.createGain();
+    bus.gain.value = HORDE_BUS_GAIN;
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = PAN_FAR;
+    bus.connect(pan).connect(ctx.destination);
+    this.hordeBus = bus;
+    this.hordePan = pan;
+    this.runLoop = new CrossfadeLoop(ctx, 'horde', bus, RUN_LOOP_OVERLAP_SEC);
+
     this.droneGain = gain;
     this.nextBeatAt = 0;
     this.nextGroanAt = ctx.currentTime + 3;
     this.running = true;
   }
 
-  update(gapM: number, dt: number): void {
+  /**
+   * @param gapM metros de ventaja.
+   * @param run01 0 horda arrastrándose … 1 a la carrera (de `Horde.run01`).
+   */
+  update(gapM: number, run01: number, dt: number): void {
     const ctx = this.ctx;
     if (!ctx || !this.running || !this.droneGain) return;
 
@@ -66,12 +108,44 @@ class ProximityAudio {
       this.nextBeatAt = 0; // late el próximo tick en cuanto entre en rango
     }
 
-    // Gruñidos: más seguidos y más presentes cuanto más cerca.
     const near = 1 - Math.min(1, Math.max(0, gapM) / GROAN_RANGE_M);
+    this.hordePan?.pan.setTargetAtTime(PAN_FAR + (PAN_NEAR - PAN_FAR) * near, ctx.currentTime, 0.5);
+
+    // Gemidos y gruñidos: más seguidos y más presentes cuanto más cerca.
     if (near > 0.05 && ctx.currentTime >= this.nextGroanAt) {
-      this.groan(0.08 + near * 0.3, near);
+      this.voice(near);
       this.nextGroanAt = ctx.currentTime + 1.5 + (1 - near) * 5 + Math.random() * 2;
     }
+
+    // La manada corriendo: se oye en cuanto la horda corre, aunque esté lejos
+    // (es el aviso de que viene), y crece al acercarse.
+    this.runLoop?.update(RUN_LOOP_GAIN * run01 * (0.35 + 0.65 * near));
+  }
+
+  /** La horda carga al empezar una oleada: un alarido, grave y lejano. */
+  charge(): void {
+    const ctx = this.ctx;
+    const bus = this.hordeBus;
+    if (!ctx || !this.running || !bus) return;
+    sfx.play(ctx, 'scream', bus, {
+      gain: SCREAM_CHARGE_GAIN,
+      rate: 0.85 + Math.random() * 0.1,
+      fadeInSec: 0.05,
+      fadeOutSec: 0.2,
+    });
+  }
+
+  /** Te alcanzan: alarido encima y el mordisco justo detrás. */
+  bite(): void {
+    const ctx = this.ctx;
+    const bus = this.hordeBus;
+    if (!ctx || !this.running || !bus) return;
+    sfx.play(ctx, 'scream', bus, { gain: SCREAM_CATCH_GAIN, fadeInSec: 0.02, fadeOutSec: 0.12 });
+    sfx.play(ctx, 'bite', bus, {
+      gain: BITE_GAIN,
+      startAtSec: ctx.currentTime + 0.25,
+      fadeOutSec: 0.08, // el clip acaba cortado en seco
+    });
   }
 
   stop(): void {
@@ -81,10 +155,29 @@ class ProximityAudio {
     if (ctx && this.droneGain) {
       this.droneGain.gain.setTargetAtTime(0, ctx.currentTime, 0.1);
     }
+    if (ctx && this.hordeBus) {
+      this.hordeBus.gain.setTargetAtTime(0, ctx.currentTime, 0.15);
+    }
+    this.runLoop?.stop();
+    this.runLoop = null;
     const oscs = this.oscillators;
     this.oscillators = [];
     setTimeout(() => oscs.forEach((o) => o.stop()), 600);
     this.droneGain = null;
+    this.hordeBus = null;
+    this.hordePan = null;
+  }
+
+  /** Una voz de la horda: gemido lejano o gruñido con voz según la cercanía. */
+  private voice(near: number): void {
+    const ctx = this.ctx;
+    const bus = this.hordeBus;
+    if (!ctx || !bus) return;
+    const voiced = near > GROWL_FROM_NEAR && Math.random() < near;
+    const played = voiced
+      ? sfx.play(ctx, 'growl', bus, { gain: lerp(GROWL_GAIN, near), rate: 0.9 + Math.random() * 0.2 })
+      : sfx.play(ctx, 'moans', bus, { gain: lerp(MOAN_GAIN, near), rate: 0.92 + Math.random() * 0.16 });
+    if (!played) this.groan(0.08 + near * 0.3, near);
   }
 
   private thump(delaySec: number, volume: number): void {
@@ -103,7 +196,7 @@ class ProximityAudio {
     osc.stop(t + 0.16);
   }
 
-  /** Un gruñido: diente de sierra grave con vibrato, filtrado y con ataque lento. */
+  /** Fallback sin clips: diente de sierra grave con vibrato, filtrado y con ataque lento. */
   private groan(volume: number, near: number): void {
     const ctx = this.ctx;
     if (!ctx) return;

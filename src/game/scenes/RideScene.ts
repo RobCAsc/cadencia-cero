@@ -243,11 +243,13 @@ export class RideScene extends Phaser.Scene {
           this.hud.pulseHealth();
           this.horde.lunge();
           this.effects.burstBlood();
+          proximityAudio.bite();
         }
         break;
       case 'segmentChanged':
         if (event.segment.kind === 'surge') {
           this.banner.showNotice('¡¡OLEADA!!', 2500, UI.danger);
+          if (!fastForward) proximityAudio.charge();
         } else if (event.segment.cueResistance !== undefined && this.resistanceCtl) {
           this.banner.showNotice(`Resistencia → ${event.segment.cueResistance}`, 4000, UI.info);
         }
@@ -363,7 +365,7 @@ export class RideScene extends Phaser.Scene {
     this.horde.update(dt, state.gapM, state.zombieSpeedKph, state.caughtGraceSec > 0);
     this.effects.update(state.playerSpeedKph / 3.6, dt, night01, danger01);
     this.effects.updateHorde(this.horde.screenX, this.horde.run01);
-    proximityAudio.update(state.gapM, dt);
+    proximityAudio.update(state.gapM, this.horde.run01, dt);
     ambientAudio.update(night01, Math.max(0, Math.min(1, (progress - 0.88) / 0.12)));
 
     // La cámara se acerca un pelín cuando los tienes encima y se balancea

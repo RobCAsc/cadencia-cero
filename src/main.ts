@@ -11,6 +11,7 @@ import { createHeartRateSource } from './input/createHeartRateSource';
 import { toSimRider } from './sim/riderProfile';
 import { loadRiderProfile } from './storage/riderStore';
 import { loadSessions } from './storage/sessionStore';
+import { sfx } from './game/sfx';
 import { registerServiceWorker } from './pwa';
 
 registerServiceWorker();
@@ -56,6 +57,7 @@ if (
   heartRate instanceof FakeHeartRateSource
 ) {
   new DevPanel(game, source, heartRate);
-  // Referencia para depurar desde la consola del navegador.
-  (window as unknown as { game?: Phaser.Game }).game = game;
+  // Referencias para depurar desde la consola del navegador.
+  (window as unknown as { game?: Phaser.Game; sfx?: typeof sfx }).game = game;
+  (window as unknown as { sfx?: typeof sfx }).sfx = sfx;
 }

@@ -119,6 +119,10 @@ Deliberately excluded (decided 2026-09-13): cosmetic unlockables, XP, levels. Th
 
 **Phase 3 — optional.** ESP32 reading the bike's own reed switch and re-broadcasting as standard CSC, removing the dependency on the purchased sensor. Firmware, not app work.
 
+## Sound
+
+Everything is synthesized in WebAudio (wind, crickets, birds, the proximity drone and heartbeat, thunder, the catch hit) except the horde's voices: five short clips in `assets/sfx` that the rider supplied on 2026-09-14 (idle moans, a voiced growl, the running horde, a scream, a bite). `src/game/sfx.ts` fetches them at load, decodes them once the AudioContext exists, and plays them with envelopes; `src/game/proximityAudio.ts` puts them on one horde bus panned slightly left, because the horde is behind. Moans and growls come by closeness, the running clip is chained with a crossfade and follows `Horde.run01`, the scream marks the start of a surge and the catch, the bite the catch. They are the only binary assets in the game; art stays by code. If a clip fails to load, the synthesized groan takes its place.
+
 ## Anti-goals
 
 Do not build 3D. A 2.5D parallax side-scroller delivers the sensation at a fraction of the cost.
