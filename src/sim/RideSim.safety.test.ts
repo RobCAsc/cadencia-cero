@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { SIM, type EffortTable, type SimConfig } from '../config';
 import { RideSim } from './RideSim';
-import type { TrainingProgram } from './program';
+import { hordeSpeedForZone, type TrainingProgram } from './program';
 import type { SimEvent } from './types';
 
 // Las reglas de seguridad y las herramientas de la salida que no son la
@@ -120,6 +120,31 @@ describe('Terminar enfría en vez de cortar', () => {
     sim.endNow();
     const events = beatFor(sim, 1, 100);
     expect(events.some((e) => e.type === 'finished')).toBe(true);
+  });
+});
+
+describe('el resto en suave', () => {
+  it('sustituye lo que queda por Z0-Z1 con la horda al paso de esa zona, y una vuelta a la calma al final', () => {
+    const sim = make(fondo());
+    beatFor(sim, 120, 130);
+    const total = sim.state.totalSec;
+    sim.easeRemaining(60);
+    expect(sim.state.eased).toBe(true);
+    expect(sim.state.totalSec).toBe(total); // no acorta: cambia
+    expect(sim.state.segment).toMatchObject({ kind: 'recover', zoneMin: 0, zoneMax: 1 });
+    expect(sim.state.pushAvailable).toBe(false);
+    beatFor(sim, 15, 130); // pasada la rampa, la horda va al paso de Z0-Z1
+    expect(sim.state.zombieSpeedKph).toBeCloseTo(hordeSpeedForZone(0, 1, EFFORT_LINEAR), 0);
+    const events = beatFor(sim, total - 120 - 15 + 1, 100);
+    expect(events.some((e) => e.type === 'finished')).toBe(true);
+    expect(sim.currentSegments[sim.currentSegments.length - 1]?.kind).toBe('cooldown');
+  });
+
+  it('con menos que el enfriamiento por delante, solo enfría', () => {
+    const sim = make(fondo());
+    beatFor(sim, 690, 130);
+    sim.easeRemaining(120);
+    expect(sim.state.coolingDown).toBe(true);
   });
 });
 

@@ -16,16 +16,20 @@ import { makeTextButton, type TapButton } from '../uiButton';
 
 const DEPTH = 25;
 const PANEL_W = 680;
-const PANEL_H = 340;
+const PANEL_H = 392;
 const NO_SIGNAL_AFTER_MS = 8000;
 
 export interface CalmPanelOptions {
   source: HeartRateSource;
   history: readonly SessionRecord[];
+  /** El aviso de seguridad, si toca esta semana. */
+  safetyNote?: string;
   /** Arrancar la salida (con el reposo medido, o sin él si se saltó). */
   onStart: (restBpm: number | undefined) => void;
   /** Cambiar la salida de hoy por una suave (solo se ofrece si el reposo viene alto). */
   onEasier: (restBpm: number) => void;
+  /** No salir hoy (solo se ofrece si el reposo viene muy alto). */
+  onRest: () => void;
 }
 
 export class CalmPanel {
@@ -40,6 +44,7 @@ export class CalmPanel {
   private readonly bar: Phaser.GameObjects.Graphics;
   private readonly startButton: TapButton;
   private readonly easierButton: TapButton;
+  private readonly restButton: TapButton;
   private readonly skipButton: TapButton;
   private result: number | undefined;
   private done = false;
@@ -96,15 +101,27 @@ export class CalmPanel {
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
 
-    this.skipButton = makeTextButton(scene, cx - PANEL_W / 2 + 90, top + PANEL_H - 40, 140, 44, 'Saltar', () => this.finish(true), DEPTH + 1, 18);
+    const buttonsY = top + PANEL_H - 40;
+    this.skipButton = makeTextButton(scene, cx - PANEL_W / 2 + 90, buttonsY, 140, 44, 'Saltar', () => this.finish(true), DEPTH + 1, 18);
     this.skipButton.rect.setAlpha(0.7);
-    this.startButton = makeTextButton(scene, cx + PANEL_W / 2 - 120, top + PANEL_H - 40, 200, 56, 'Salir', () => this.finish(false), DEPTH + 1, 24);
-    this.easierButton = makeTextButton(scene, cx + PANEL_W / 2 - 350, top + PANEL_H - 40, 220, 56, 'Mejor suave hoy', () => this.easier(), DEPTH + 1, 20);
+    this.startButton = makeTextButton(scene, cx + PANEL_W / 2 - 120, buttonsY, 200, 56, 'Salir', () => this.finish(false), DEPTH + 1, 24);
+    this.easierButton = makeTextButton(scene, cx - 10, buttonsY, 200, 56, 'Mejor suave hoy', () => this.easier(), DEPTH + 1, 19);
+    this.restButton = makeTextButton(scene, cx - PANEL_W / 2 + 110, buttonsY, 200, 56, 'Descansar hoy', () => this.rest(), DEPTH + 1, 19);
     this.setButtonVisible(this.startButton, false);
     this.setButtonVisible(this.easierButton, false);
+    this.setButtonVisible(this.restButton, false);
 
     this.objects.push(dim, panel, title, subtitle, this.countdown, this.bpmText, this.bar, this.hint, this.verdictText);
-    for (const b of [this.skipButton, this.startButton, this.easierButton]) this.objects.push(b.rect, b.label);
+    for (const b of [this.skipButton, this.startButton, this.easierButton, this.restButton]) this.objects.push(b.rect, b.label);
+
+    // El aviso de seguridad, una vez por semana, donde el rider ya está quieto y leyendo.
+    if (opts.safetyNote) {
+      const note = scene.add
+        .text(cx, top + PANEL_H - 84, opts.safetyNote, { fontFamily: FONT_SANS, fontSize: '13px', color: UI.textDim, align: 'center', wordWrap: { width: PANEL_W - 60 } })
+        .setOrigin(0.5)
+        .setDepth(DEPTH + 1);
+      this.objects.push(note);
+    }
 
     this.unsubscribe = opts.source.onSample((sample) => this.test.push(sample));
   }
@@ -153,7 +170,8 @@ export class CalmPanel {
     this.showVerdict(verdict);
     this.setButtonVisible(this.skipButton, false);
     this.setButtonVisible(this.startButton, true);
-    this.setButtonVisible(this.easierButton, verdict?.state === 'elevated');
+    this.setButtonVisible(this.easierButton, verdict?.state === 'elevated' || verdict?.state === 'rest');
+    this.setButtonVisible(this.restButton, verdict?.state === 'rest');
   }
 
   private showVerdict(verdict: ReadinessVerdict | undefined): void {
@@ -165,6 +183,13 @@ export class CalmPanel {
           : `Con ${Math.max(0, 3 - n)} lectura${3 - n === 1 ? '' : 's'} más sabré cuál es tu normal.`,
       );
       this.verdictText.setColor(UI.textDim);
+      return;
+    }
+    if (verdict.state === 'rest') {
+      this.verdictText.setText(
+        `${verdict.deltaBpm} latidos por encima de tu normal (${verdict.baselineBpm}).\nHoy toca descansar, no aflojar. Vuelve mañana.`,
+      );
+      this.verdictText.setColor(UI.danger);
       return;
     }
     if (verdict.state === 'elevated') {
@@ -186,7 +211,7 @@ export class CalmPanel {
   private drawBar(frac: number): void {
     const cx = RENDER.width / 2;
     const w = 400;
-    const y = 150 + 216;
+    const y = 150 + 214;
     this.bar.clear();
     this.bar.fillStyle(0x2a3142, 1);
     this.bar.fillRect(cx - w / 2, y, w, 6);
@@ -212,5 +237,10 @@ export class CalmPanel {
     if (rest === undefined) return;
     this.destroy();
     this.opts.onEasier(rest);
+  }
+
+  private rest(): void {
+    this.destroy();
+    this.opts.onRest();
   }
 }

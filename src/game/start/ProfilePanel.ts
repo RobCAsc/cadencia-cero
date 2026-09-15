@@ -4,9 +4,12 @@ import type { BandConnection } from '../../input/BandConnection';
 import type { BleStatus } from '../../input/BleHeartRateSource';
 import type { HeartRateSource } from '../../input/HeartRateSource';
 import { StepTest, type StepProgress } from '../../sim/heartRateTests';
+import { isCountable, type SessionRecord } from '../../sim/history';
 import {
   INTENSITY_MAX,
   INTENSITY_MIN,
+  STEP_TEST_FROM_RIDES,
+  stepTestDue,
   toSimRider,
   withAge,
   withIntensity,
@@ -58,10 +61,11 @@ const REST_SOURCE_ES: Record<NonNullable<StoredRiderProfile['hrRestSource']>, st
 };
 
 const STAGE_ES = {
-  warm: ['Escalón 1 de 3 · entrar en calor', 'Pedalea suave. Este escalón no cuenta, solo calienta.'],
+  warm: ['Escalón 1 de 3 · entrar en calor (4 min)', 'Pedalea suave y ve subiendo. Este escalón no cuenta, solo calienta.'],
   easy: ['Escalón 2 de 3 · cómodo', 'Un ritmo en el que hablas sin problema, frases enteras.'],
-  hard: ['Escalón 3 de 3 · fuerte', 'Un ritmo en el que ya no puedes hablar. Aguanta los dos minutos.'],
+  hard: ['Escalón 3 de 3 · fuerte', 'Un ritmo en el que ya no puedes hablar. Aguanta los dos minutos; si algo no va, cancela.'],
 } as const;
+const STEP_BUTTON_LABEL = 'Escalera 8 min';
 
 /**
  * Overlay de perfil y pulsera sobre la pantalla de inicio. Todo lo que cambia
@@ -83,6 +87,7 @@ export class ProfilePanel {
   private maxText!: Phaser.GameObjects.Text;
   private maxSourceText!: Phaser.GameObjects.Text;
   private stepText!: Phaser.GameObjects.Text;
+  private stepNoteText!: Phaser.GameObjects.Text;
   private stepButton!: ReturnType<typeof makeTextButton>;
   private intensityText!: Phaser.GameObjects.Text;
   private testText!: Phaser.GameObjects.Text;
@@ -159,8 +164,13 @@ export class ProfilePanel {
 
     // Fila 4: escalera
     this.label(4, 'Escalera');
-    this.stepText = this.value(4, '', UI.textBright, 22);
-    this.stepButton = this.action(4, 'Escalera 6 min', () => this.toggleTest());
+    this.stepText = this.value(4, '', UI.textBright, 22).setY(this.rowY(4) - 8);
+    this.stepNoteText = this.scene.add
+      .text(VALUE_X, this.rowY(4) + 16, '', { fontFamily: FONT_SANS, fontSize: '13px', color: UI.textDim })
+      .setOrigin(0.5)
+      .setDepth(DEPTH + 1);
+    this.objects.push(this.stepNoteText);
+    this.stepButton = this.action(4, STEP_BUTTON_LABEL, () => this.toggleTest());
 
     // Fila 5: intensidad
     this.label(5, 'Intensidad');
@@ -242,6 +252,25 @@ export class ProfilePanel {
           ? `cómodo ${p.anchorBpm} · fuerte ––`
           : '––',
     );
+    // La escalera se gana con seis salidas (el escalón fuerte no es para el
+    // primer día) y se repite cuando envejece o el reposo bajó.
+    const rides = this.ridesCount();
+    const due = stepTestDue(p, Date.now());
+    const locked = rides < STEP_TEST_FROM_RIDES;
+    this.stepNoteText.setText(
+      locked
+        ? `a partir de la salida ${STEP_TEST_FROM_RIDES} (llevas ${rides})`
+        : due === 'stale'
+          ? 'toca repetirla: hace más de seis semanas'
+          : due === 'restDropped'
+            ? 'toca repetirla: tu reposo bajó'
+            : due === 'never'
+              ? 'dos anclas del habla afinan el máximo'
+              : '',
+    );
+    this.stepNoteText.setColor(due === 'stale' || due === 'restDropped' ? UI.warn : UI.textDim);
+    if (!this.active) this.stepButton.rect.setAlpha(locked ? 0.45 : 1);
+
     const sign = p.intensityPct > 0 ? '+' : '';
     this.intensityText.setText(`${sign}${p.intensityPct} %`);
     this.intensityText.setColor(
@@ -275,9 +304,19 @@ export class ProfilePanel {
 
   // ---- la escalera ---------------------------------------------------------
 
+  private ridesCount(): number {
+    const history = (this.scene.registry.get('sessionHistory') as SessionRecord[] | undefined) ?? [];
+    return history.filter(isCountable).length;
+  }
+
   private toggleTest(): void {
     if (this.active) {
       this.stopTest();
+      return;
+    }
+    if (this.ridesCount() < STEP_TEST_FROM_RIDES) {
+      this.testText.setText(`La escalera pide un escalón fuerte: se abre a partir de la salida ${STEP_TEST_FROM_RIDES}. Hasta entonces, edad y reposo bastan.`);
+      this.testText.setColor(UI.textMuted);
       return;
     }
     const source = this.scene.registry.get('heartRateSource') as HeartRateSource;
@@ -314,7 +353,7 @@ export class ProfilePanel {
       this.testText.setColor(UI.warn);
       return;
     }
-    this.setProfile(withStepTest(this.profile, result.easyBpm, result.hardBpm));
+    this.setProfile(withStepTest(this.profile, result.easyBpm, result.hardBpm, Date.now()));
     this.testText.setText(
       `Escalera: cómodo ${result.easyBpm} · fuerte ${result.hardBpm} → máximo ${this.profile.hrMaxBpm} bpm (${MAX_SOURCE_ES[this.profile.hrMaxSource]}).`,
     );
@@ -327,7 +366,7 @@ export class ProfilePanel {
     this.ticker?.remove(false);
     this.ticker = undefined;
     this.active = undefined;
-    this.stepButton.label.setText('Escalera 6 min');
+    this.stepButton.label.setText(STEP_BUTTON_LABEL);
     this.testText.setText('');
   }
 

@@ -71,6 +71,8 @@ export class RideSim {
 
   /** Enfriamiento tras "Terminar": la horda se para y el programa acaba en dos minutos. */
   private coolingDown = false;
+  /** El resto de la salida cambiado a suave (salud a cero, pulso muy alto sostenido). */
+  private eased = false;
   /** El empujón opcional: uno por salida. */
   private pushUsed = false;
   private push: { endSec: number; caughtBefore: number } | undefined;
@@ -161,6 +163,54 @@ export class RideSim {
     this.totalSec = cooldown.endSec;
     this.coolingDown = true;
     this.push = undefined;
+  }
+
+  /**
+   * Lo que queda del programa, en suave: un tramo Z0-Z1 con la horda al paso
+   * de esa zona y la vuelta a la calma al final. Es "cambiar a suave" sin
+   * perder la salida: con la salud a cero, o con el pulso muy alto sostenido
+   * en las fases de arranque y base.
+   */
+  easeRemaining(cooldownSec: number = this.cfg.quitCooldownSec): void {
+    if (this.ridePhase !== 'riding' || this.coolingDown || this.eased) return;
+    const idx = segmentIndexAt(this.segments, this.elapsedSec);
+    const cur = this.segments[idx];
+    if (!cur) return;
+    const t = this.elapsedSec;
+    const remaining = this.totalSec - t;
+    this.eased = true;
+    this.push = undefined;
+    this.pushUsed = true;
+    if (remaining <= cooldownSec) {
+      this.beginCooldown(remaining);
+      return;
+    }
+    const easyKph = hordeSpeedForZone(0, 1, this.cfg.effort);
+    const truncated: ExpandedSegment = { ...cur, durationSec: t - cur.startSec, endSec: t };
+    const easy: ExpandedSegment = {
+      kind: 'recover',
+      durationSec: remaining - cooldownSec,
+      zone: [0, 1],
+      zoneMin: 0,
+      zoneMax: 1,
+      zombieSpeedKph: easyKph,
+      cue: 'Suave hasta el final: gira sin apretar',
+      startSec: t,
+      endSec: this.totalSec - cooldownSec,
+      sourceIndex: -1,
+    };
+    const cooldown: ExpandedSegment = {
+      kind: 'cooldown',
+      durationSec: cooldownSec,
+      zone: [0, 1],
+      zoneMin: 0,
+      zoneMax: 1,
+      zombieSpeedKph: easyKph,
+      startSec: easy.endSec,
+      endSec: this.totalSec,
+      sourceIndex: -1,
+    };
+    this.segments = [...this.segments.slice(0, idx), truncated, easy, cooldown];
   }
 
   /** Acabar ya, saltándose el enfriamiento (segundo toque en Terminar). */
@@ -465,6 +515,7 @@ export class RideSim {
       aboveZone: this.aboveZone,
       easeOff: this.easeOff,
       coolingDown: this.coolingDown,
+      eased: this.eased,
       pushAvailable:
         this.ridePhase === 'riding' && !this.coolingDown && !this.pushUsed && seg.kind === 'steady',
       playerSpeedKph: this.lastPlayerKph,

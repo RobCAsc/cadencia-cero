@@ -7,8 +7,17 @@ import {
   PROGRAM_CATALOG,
   type CatalogEntry,
 } from '../../sim/programs/catalog';
-import { PHASE_ES, recommendToday, type Recommendation } from '../../sim/progress';
-import type { StoredRiderProfile } from '../../sim/riderProfile';
+import {
+  nextRideStatus,
+  PHASE_ES,
+  recommendToday,
+  weeklyReview,
+  weeklyReviewDue,
+  weekStartMs,
+  type Recommendation,
+} from '../../sim/progress';
+import { stepTestDue, type StoredRiderProfile } from '../../sim/riderProfile';
+import { loadPlanState, savePlanState, type PlanState } from '../../storage/planStore';
 import { Atmosphere } from '../atmosphere';
 import { gameAudio } from '../audio';
 import { formatMMSS } from '../format';
@@ -16,6 +25,8 @@ import { Campfire } from '../start/Campfire';
 import { ProfilePanel } from '../start/ProfilePanel';
 import { ProfilePreview } from '../start/ProfilePreview';
 import { ProgressPanel } from '../start/ProgressPanel';
+import { ReviewPanel } from '../start/ReviewPanel';
+import { ScreeningPanel } from '../start/ScreeningPanel';
 import { FONT_MONO, FONT_SANS, UI } from '../theme';
 import { makeTapButton, makeTextButton } from '../uiButton';
 import { acquireWakeLock } from '../wakeLock';
@@ -28,7 +39,11 @@ const TARGET_COLOR: Record<string, number> = {
   threshold: 0xf39c12,
   anaerobic: 0xe74c3c,
   mixed: 0x9b59b6,
+  strength: 0xd9b06a,
 };
+
+/** La salida mínima de los días malos: tres de calor y siete suaves. Cuenta para la semana. */
+const MINIMAL_RIDE = { warmupMin: 3, mainMin: 7 } as const;
 
 const LEFT_X = 56;
 const LEFT_W = 470;
@@ -56,9 +71,14 @@ interface StoredConfig {
   values: Record<string, Record<string, number>>;
 }
 
-/** Nombre corto para los chips: "Primera salida" no cabe. */
+/** Nombre corto para los chips: con ocho programas, "Primera salida" y "Recuperación" no caben. */
+const CHIP_LABEL: Record<string, string> = {
+  'primera-salida': 'Primera',
+  recuperacion: 'Recup.',
+};
+
 function chipLabel(entry: CatalogEntry): string {
-  return entry.program.id === 'primera-salida' ? 'Primera' : entry.program.name;
+  return CHIP_LABEL[entry.program.id] ?? entry.program.name;
 }
 
 /**
@@ -86,7 +106,11 @@ export class StartScene extends Phaser.Scene {
   // programa. Sin Container: el hit-test de Phaser no ve botones re-parentados.
   private adjustObjects: Phaser.GameObjects.GameObject[] = [];
   private statusText!: Phaser.GameObjects.Text;
+  private nextRideText!: Phaser.GameObjects.Text;
   private profilePanel: ProfilePanel | undefined;
+  /** Cribado o revisión abiertos: el campamento espera. */
+  private overlayOpen = false;
+  private reviewChecked = false;
 
   constructor() {
     super('StartScene');
@@ -117,12 +141,16 @@ export class StartScene extends Phaser.Scene {
     });
 
     // Perfil y pulsera: botón arriba a la derecha, estado abajo a la izquierda.
+    // Al lado, el cribado de salud, que se puede volver a contestar.
     makeTextButton(this, 1124, 54, 200, 42, 'Perfil y pulsera', () => this.openProfile(), 10, 18);
+    makeTextButton(this, 904, 54, 200, 42, 'Antes de entrenar', () => this.openScreening(), 10, 17);
     this.statusText = this.add.text(LEFT_X, 686, '', {
       fontFamily: FONT_SANS,
       fontSize: '15px',
       color: UI.textDim,
     });
+    // El día comprometido para la próxima salida: la intención dicha en voz alta.
+    this.nextRideText = this.add.text(LEFT_X, 80, '', { fontFamily: FONT_SANS, fontSize: '16px', color: UI.info });
     const band = this.registry.get('band') as BandConnection;
     const unsubscribeBand = band.onStatus(() => this.renderStatus());
     this.renderStatus();
@@ -145,6 +173,9 @@ export class StartScene extends Phaser.Scene {
     startButton.on('pointerover', () => startButton.setFillStyle(0x27ae60));
     startButton.on('pointerout', () => startButton.setFillStyle(0x1e8449));
     startButton.on('pointerdown', () => this.startRide());
+    // La salida mínima de los días malos: diez minutos que protegen la semana.
+    const minimal = makeTextButton(this, RIGHT_X + 96, 650, 192, 56, 'Solo diez minutos', () => this.startMinimal(), 10, 18);
+    minimal.rect.setAlpha(0.8);
 
     // El historial llega de IndexedDB cuando llega (y cambia al sembrarlo o
     // borrarlo desde el panel dev): el campamento se rehace con él.
@@ -155,6 +186,44 @@ export class StartScene extends Phaser.Scene {
       this.registry.events.off('changedata-sessionHistory', onHistory);
     });
     this.refreshFromHistory();
+
+    // Lo primero de todo, una vez: el cribado. Después, si toca, la revisión semanal.
+    if (!loadPlanState().screening) this.openScreening();
+    else this.maybeReview();
+  }
+
+  /** El cribado de salud: cuatro preguntas, y el modo por sensación si hace falta. */
+  private openScreening(): void {
+    if (this.overlayOpen || this.profilePanel) return;
+    this.overlayOpen = true;
+    const plan = loadPlanState();
+    new ScreeningPanel(this, {
+      flags: plan.screening?.flags,
+      onDone: (flags, mode) => {
+        savePlanState({ screening: { answeredAtMs: Date.now(), flags }, inputMode: mode });
+        this.registry.set('inputMode', mode);
+        this.overlayOpen = false;
+        this.renderStatus();
+        this.maybeReview();
+      },
+    });
+  }
+
+  /** La revisión semanal, la primera vez que se abre la app en una semana nueva. */
+  private maybeReview(): void {
+    if (this.overlayOpen || this.reviewChecked) return;
+    const sessions = this.history();
+    if (sessions.length === 0) return; // el historial puede no haber llegado aún
+    const nowMs = Date.now();
+    const plan: PlanState = loadPlanState();
+    if (!plan.screening) return; // primero el cribado; su cierre vuelve a llamar aquí
+    if (!weeklyReviewDue(sessions, plan.lastReviewWeekMs, nowMs)) return;
+    this.reviewChecked = true;
+    this.overlayOpen = true;
+    new ReviewPanel(this, weeklyReview(sessions, nowMs), () => {
+      savePlanState({ lastReviewWeekMs: weekStartMs(nowMs) });
+      this.overlayOpen = false;
+    });
   }
 
   update(_time: number, deltaMs: number): void {
@@ -172,6 +241,11 @@ export class StartScene extends Phaser.Scene {
     const nowMs = Date.now();
     this.progress.show(sessions, nowMs);
     this.recommendation = recommendToday(sessions, nowMs);
+    // La fase la lee la salida: en arranque y base, el pulso muy alto sostenido cambia a suave solo.
+    this.registry.set('planPhase', this.recommendation.phase);
+    const next = nextRideStatus(loadPlanState().nextRideDayMs, nowMs);
+    this.nextRideText.setText(next.label);
+    this.nextRideText.setColor(next.state === 'today' ? UI.good : next.state === 'missed' ? UI.textMuted : UI.info);
     const index = PROGRAM_CATALOG.findIndex((e) => e.program.id === this.recommendation.programId);
     this.recommendedIndex = index >= 0 ? index : 0;
     // Los ajustes sugeridos solo rellenan huecos: lo que el rider tocó, se respeta.
@@ -180,19 +254,25 @@ export class StartScene extends Phaser.Scene {
       if (values[id] === undefined) values[id] = value;
     }
     this.select(this.recommendedIndex);
+    this.maybeReview();
   }
 
   private renderStatus(): void {
     const band = this.registry.get('band') as BandConnection;
     const p = this.registry.get('riderProfileStored') as StoredRiderProfile;
+    const feel = this.registry.get('inputMode') === 'feel';
     const bandText = band.isConnected()
       ? `Pulsera: ${band.getDeviceName() ?? 'conectada'}`
       : 'Pulsera: sin conectar';
     const sign = p.intensityPct > 0 ? '+' : '';
+    const due = stepTestDue(p, Date.now());
+    const stepNote = due === 'stale' || due === 'restDropped' ? '  ·  escalera: toca repetirla' : '';
     this.statusText.setText(
-      `${bandText}  ·  ${p.ageYears} años  ·  reposo ${p.hrRestBpm}  ·  máx ${p.hrMaxBpm}  ·  intensidad ${sign}${p.intensityPct} %`,
+      feel
+        ? `Modo por sensación: los tramos van por tiempo y la guía es la prueba del habla  ·  ${bandText}`
+        : `${bandText}  ·  ${p.ageYears} años  ·  reposo ${p.hrRestBpm}  ·  máx ${p.hrMaxBpm}  ·  intensidad ${sign}${p.intensityPct} %${stepNote}`,
     );
-    this.statusText.setColor(band.isConnected() ? UI.textMuted : UI.textDim);
+    this.statusText.setColor(band.isConnected() || feel ? UI.textMuted : UI.textDim);
   }
 
   private openProfile(): void {
@@ -248,7 +328,7 @@ export class StartScene extends Phaser.Scene {
     const label = this.add
       .text(x + w / 2, CHIPS_Y + CHIP_H / 2 - 2, chipLabel(entry), {
         fontFamily: FONT_SANS,
-        fontSize: '14px',
+        fontSize: '13px',
         color: UI.textMuted,
       })
       .setOrigin(0.5);
@@ -354,10 +434,22 @@ export class StartScene extends Phaser.Scene {
   }
 
   private startRide(): void {
-    if (this.profilePanel) return; // el panel está abierto: el dim se traga el toque
+    if (this.profilePanel || this.overlayOpen) return; // un panel abierto: el dim se traga el toque
     const entry = PROGRAM_CATALOG[this.selectedIndex];
     if (!entry) return;
-    this.registry.set('selectedProgram', this.adjustedProgram(entry));
+    this.launch(this.adjustedProgram(entry));
+  }
+
+  /** Diez minutos de recuperación, sin tocar la selección: para el día que no hay más. */
+  private startMinimal(): void {
+    if (this.profilePanel || this.overlayOpen) return;
+    const entry = PROGRAM_CATALOG.find((e) => e.program.id === 'recuperacion');
+    if (!entry) return;
+    this.launch(applyAdjustments(entry.program, entry.adjustments, { ...MINIMAL_RIDE }));
+  }
+
+  private launch(program: ReturnType<typeof applyAdjustments>): void {
+    this.registry.set('selectedProgram', program);
     // Todo lo que exige gesto de usuario, en el mismo gesto.
     try {
       if (!this.scale.isFullscreen) this.scale.startFullscreen();

@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { RENDER, SIM } from '../../config';
 import type { ExpandedSegment } from '../../sim/program';
 import type { SimState } from '../../sim/types';
-import { zoneLabel, zoneOf } from '../../sim/zones';
+import { talkTestCue, zoneLabel, zoneOf } from '../../sim/zones';
 import { formatMMSS } from '../format';
 import { FONT_MONO, FONT_SANS, KIND_COLOR, UI, ZONE_COLOR } from '../theme';
 import { makeTextButton, type TapButton } from '../uiButton';
@@ -13,6 +13,7 @@ export const KIND_ES: Record<string, string> = {
   recover: 'Recuperación',
   steady: 'Ritmo',
   cooldown: 'Vuelta a la calma',
+  push: 'Empujón',
 };
 
 const HEALTH_W = 256;
@@ -26,22 +27,29 @@ const TIMELINE_Y = 170;
 const TIMELINE_W = 600;
 const TIMELINE_H = 26;
 const QUIT_ARM_MS = 3000;
+const GOLD = '#d9b06a';
 
 export interface HudOptions {
   segments: readonly ExpandedSegment[];
   onQuit: () => void;
 }
 
+export interface HudExtras {
+  /** Tu ventaja menos la del fantasma en este minuto (positivo = vas por delante de la última vez). */
+  ghostDeltaM?: number;
+}
+
 /**
  * Lectura del estado, nada más: el gap gigante al centro es el protagonista.
  * Alrededor, lo que el rider necesita para entrenar bien: en qué zona va y
  * cuál le pide el tramo, dónde está dentro de la sesión, y una salida digna
- * si hoy no puede más (terminar guarda la salida; nunca la borra).
+ * si hoy no puede más (terminar enfría y guarda la salida; nunca la borra).
  */
 export class Hud {
   private readonly gapText: Phaser.GameObjects.Text;
   private readonly gapLabel: Phaser.GameObjects.Text;
   private readonly hordeSpeedText: Phaser.GameObjects.Text;
+  private readonly ghostText: Phaser.GameObjects.Text;
   private readonly cadenceText: Phaser.GameObjects.Text;
   private readonly statsText: Phaser.GameObjects.Text;
   private readonly rightText: Phaser.GameObjects.Text;
@@ -52,10 +60,11 @@ export class Hud {
   private readonly timeline: Phaser.GameObjects.Graphics;
   private readonly playhead: Phaser.GameObjects.Graphics;
   private readonly quitButton: TapButton;
-  private readonly segments: readonly ExpandedSegment[];
-  private readonly totalSec: number;
-  private readonly maxKph: number;
+  private segments: readonly ExpandedSegment[];
+  private totalSec: number;
+  private maxKph: number;
   private quitArmedUntil = 0;
+  private cooling = false;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -79,6 +88,10 @@ export class Hud {
       .text(cx, 140, '', { fontFamily: FONT_SANS, fontSize: '16px', color: UI.textDim })
       .setOrigin(0.5, 0)
       .setDepth(10);
+    this.ghostText = scene.add
+      .text(cx, 206, '', { fontFamily: FONT_SANS, fontSize: '16px', color: GOLD })
+      .setOrigin(0.5, 0)
+      .setDepth(10);
 
     this.cadenceText = scene.add
       .text(24, 16, '', { fontFamily: FONT_MONO, fontSize: '40px', color: UI.textBright })
@@ -90,7 +103,7 @@ export class Hud {
     // Barra de zonas: Z1..Z5, la tuya encendida, la del tramo enmarcada.
     this.zoneBar = scene.add.graphics().setDepth(10);
     this.zoneCaption = scene.add
-      .text(ZONE_X, ZONE_Y + ZONE_H + 8, '', { fontFamily: FONT_SANS, fontSize: '15px', color: UI.textMuted })
+      .text(ZONE_X, ZONE_Y + ZONE_H + 8, '', { fontFamily: FONT_SANS, fontSize: '15px', color: UI.textMuted, wordWrap: { width: 300 } })
       .setDepth(10);
 
     // Línea de tiempo del programa: el perfil de la horda con un cabezal.
@@ -109,7 +122,7 @@ export class Hud {
       .setOrigin(1, 0)
       .setDepth(10);
 
-    this.quitButton = makeTextButton(scene, RENDER.width - 24 - 70, 138, 140, 44, 'Terminar', () => this.onQuitTap(opts.onQuit), 10, 18);
+    this.quitButton = makeTextButton(scene, RENDER.width - 24 - 90, 138, 180, 44, 'Terminar', () => this.onQuitTap(opts.onQuit), 10, 18);
     this.quitButton.rect.setAlpha(0.7);
 
     scene.add
@@ -125,7 +138,16 @@ export class Hud {
       .setDepth(10);
   }
 
-  update(state: SimState): void {
+  /** Los tramos cambian con el enfriamiento, el empujón o el resto en suave: la línea de tiempo se rehace. */
+  setSegments(segments: readonly ExpandedSegment[]): void {
+    this.segments = segments;
+    const last = segments[segments.length - 1];
+    this.totalSec = last ? last.endSec : 1;
+    this.maxKph = Math.max(1, ...segments.map((s) => s.zombieSpeedKph));
+    this.drawTimeline();
+  }
+
+  update(state: SimState, extras: HudExtras = {}): void {
     this.gapText.setText(`${Math.round(state.gapM)} m`);
     this.gapText.setColor(
       state.gapM < RENDER.gapDangerM ? UI.danger : state.gapM < RENDER.gapWarnM ? UI.warn : UI.good,
@@ -136,17 +158,45 @@ export class Hud {
         ? 1 + 0.06 * Math.abs(Math.sin((this.scene.time.now / 1000) * Math.PI * 1.6))
         : 1;
     this.gapText.setScale(pulse);
-    // Por encima del techo de zona la ventaja está congelada, y se dice.
-    this.gapLabel.setText(state.aboveZone ? 'ventaja congelada' : 'de ventaja');
-    this.gapLabel.setColor(state.aboveZone ? UI.warn : UI.textMuted);
+    // Lo que le pasa a la ventaja, dicho: enfriando, pulso pasado del máximo,
+    // por encima del techo de zona, o nada.
+    if (state.coolingDown) {
+      this.gapLabel.setText('enfriando · la horda se queda');
+      this.gapLabel.setColor(UI.info);
+    } else if (state.easeOff) {
+      this.gapLabel.setText('AFLOJA · pulso sobre tu máximo');
+      this.gapLabel.setColor(UI.danger);
+    } else if (state.aboveZone) {
+      this.gapLabel.setText('ventaja congelada');
+      this.gapLabel.setColor(UI.warn);
+    } else {
+      this.gapLabel.setText('de ventaja');
+      this.gapLabel.setColor(UI.textMuted);
+    }
     this.hordeSpeedText.setText(
-      state.elapsedSec < SIM.hordeWakeSec && state.zombieSpeedKph < state.segment.zombieSpeedKph * 0.95
-        ? 'la horda despierta…'
-        : `horda a ${state.zombieSpeedKph.toFixed(0)} km/h`,
+      state.coolingDown || state.easeOff
+        ? 'horda parada'
+        : state.elapsedSec < SIM.hordeWakeSec && state.zombieSpeedKph < state.segment.zombieSpeedKph * 0.95
+          ? 'la horda despierta…'
+          : `horda a ${state.zombieSpeedKph.toFixed(0)} km/h`,
     );
+    if (extras.ghostDeltaM === undefined) {
+      this.ghostText.setText('');
+    } else {
+      const d = Math.round(extras.ghostDeltaM);
+      this.ghostText.setText(d >= 0 ? `fantasma: vas ${d} m por delante de la última vez` : `fantasma: ${-d} m por detrás de la última vez`);
+      this.ghostText.setColor(d >= 0 ? GOLD : UI.textMuted);
+    }
 
-    const heartRate = state.inputMode === 'heartRate' || state.heartRateBpm > 0;
-    if (state.inputMode === 'heartRate') {
+    const feel = state.inputMode === 'feel';
+    const heartRate = state.inputMode === 'heartRate' || (!feel && state.heartRateBpm > 0);
+    if (feel) {
+      this.cadenceText.setText('por sensación');
+      this.cadenceText.setColor(UI.textMuted);
+      this.statsText.setText(
+        `${state.playerSpeedKph.toFixed(1)} km/h\n${(state.distanceM / 1000).toFixed(2)} km`,
+      );
+    } else if (state.inputMode === 'heartRate') {
       // El pulso es la entrada: va donde iba la cadencia, con el esfuerzo al lado.
       const bpm = state.heartRateBpm > 0 ? `${Math.round(state.heartRateBpm)}` : '––';
       this.cadenceText.setText(`♥ ${bpm}`);
@@ -161,7 +211,7 @@ export class Hud {
         `${state.playerSpeedKph.toFixed(1)} km/h\n${(state.distanceM / 1000).toFixed(2)} km`,
       );
     }
-    this.drawZones(state, heartRate);
+    this.drawZones(state, heartRate, feel);
     this.drawPlayhead(state.elapsedSec);
 
     const seg = state.segment;
@@ -176,7 +226,14 @@ export class Hud {
       `${formatMMSS(state.elapsedSec)} / ${formatMMSS(state.totalSec)}\n${segName} · ${formatMMSS(seg.remainingSec)}\n${nextLine}`,
     );
 
-    if (this.quitArmedUntil > 0 && this.scene.time.now > this.quitArmedUntil) this.disarmQuit();
+    if (state.coolingDown && !this.cooling) {
+      this.cooling = true;
+      this.quitArmedUntil = 0;
+      this.quitButton.label.setText('Saltar enfriamiento');
+      this.quitButton.label.setColor(UI.textBright);
+      this.quitButton.rect.setAlpha(0.7);
+    }
+    if (!this.cooling && this.quitArmedUntil > 0 && this.scene.time.now > this.quitArmedUntil) this.disarmQuit();
 
     const frac = Math.max(0, Math.min(1, state.healthPct / SIM.maxHealth));
     this.healthFill.setScale(frac, 1);
@@ -200,16 +257,23 @@ export class Hud {
 
   // ---- zonas ----------------------------------------------------------------
 
-  private drawZones(state: SimState, show: boolean): void {
+  private drawZones(state: SimState, show: boolean, feel: boolean): void {
     const g = this.zoneBar;
     g.clear();
+    const { zoneMin, zoneMax } = state.segment;
+    if (feel) {
+      // Sin pulso que mande, la guía es la prueba del habla.
+      this.zoneCaption.setText(`El tramo pide ${zoneLabel(zoneMin, zoneMax)}: ${talkTestCue(zoneMin, zoneMax)}`);
+      this.zoneCaption.setColor(UI.info);
+      this.zoneCaption.setY(ZONE_Y);
+      return;
+    }
     if (!show) {
       this.zoneCaption.setText('');
       return;
     }
     const zone = zoneOf(state.effortFrac);
     // La zona prescrita por el tramo viene del programa: se enmarca entera.
-    const { zoneMin, zoneMax } = state.segment;
     const segW = (ZONE_W - ZONE_GAP * 4) / 5;
     for (let z = 1; z <= 5; z++) {
       const x = ZONE_X + (z - 1) * (segW + ZONE_GAP);
@@ -235,7 +299,10 @@ export class Hud {
     let verdict = '';
     let color: string = UI.textMuted;
     if (state.heartRateBpm > 0) {
-      if (state.aboveZone) {
+      if (state.easeOff) {
+        verdict = ' · AFLOJA';
+        color = UI.danger;
+      } else if (state.aboveZone) {
         verdict = ' · afloja';
         color = UI.warn;
       } else if (zone < zoneMin) {
@@ -258,6 +325,7 @@ export class Hud {
     g.fillStyle(0x0b0e18, 0.55);
     g.fillRect(TIMELINE_X - 4, TIMELINE_Y - 4, TIMELINE_W + 8, TIMELINE_H + 8);
     for (const seg of this.segments) {
+      if (seg.durationSec <= 0) continue;
       const x = TIMELINE_X + (TIMELINE_W * seg.startSec) / this.totalSec;
       const w = Math.max(1, (TIMELINE_W * seg.durationSec) / this.totalSec - 1);
       const h = Math.max(3, (TIMELINE_H - 4) * (seg.zombieSpeedKph / this.maxKph));
@@ -283,14 +351,19 @@ export class Hud {
   // ---- terminar -----------------------------------------------------------------
 
   private onQuitTap(onQuit: () => void): void {
+    // Enfriando, el botón salta el enfriamiento y acaba ya.
+    if (this.cooling) {
+      onQuit();
+      return;
+    }
     if (this.quitArmedUntil > 0 && this.scene.time.now <= this.quitArmedUntil) {
       this.disarmQuit();
       onQuit();
       return;
     }
-    // Primer toque: pide confirmación tres segundos; el segundo termina.
+    // Primer toque: pide confirmación tres segundos; el segundo enfría.
     this.quitArmedUntil = this.scene.time.now + QUIT_ARM_MS;
-    this.quitButton.label.setText('¿Terminar?');
+    this.quitButton.label.setText('¿Terminar? Enfría 2 min');
     this.quitButton.label.setColor(UI.warn);
     this.quitButton.rect.setAlpha(1);
   }

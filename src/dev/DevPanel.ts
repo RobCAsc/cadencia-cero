@@ -53,7 +53,7 @@ export class DevPanel {
 
     root.innerHTML = `
       <strong>Panel dev</strong>
-      <label>Entrada <select id="dev-input"><option value="heartRate">pulso</option><option value="cadence">cadencia</option></select></label>
+      <label>Entrada <select id="dev-input"><option value="heartRate">pulso</option><option value="cadence">cadencia</option><option value="feel">sensación</option></select></label>
       <label>Cadencia <input id="dev-cadence" type="range" min="0" max="${MAX_RPM}" step="1" value="0" /></label>
       <span id="dev-readout">0 rpm</span>
       <label><input id="dev-emit" type="checkbox" checked /> Emitir muestras</label>

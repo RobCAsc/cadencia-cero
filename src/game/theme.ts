@@ -10,6 +10,7 @@ export const KIND_COLOR: Record<string, number> = {
   surge: 0xe74c3c,
   recover: 0x3498db,
   cooldown: 0x7f8c8d,
+  push: 0xd9b06a,
 };
 
 /** Color por zona cardíaca: índice 0 = suave, 1..5 = Z1..Z5. */

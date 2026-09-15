@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { RENDER, RIDER, type InputMode, type RiderProfile } from '../../config';
+import { RENDER, RIDER, SIM, type InputMode, type RiderProfile } from '../../config';
 import type { CadenceSource } from '../../input/CadenceSource';
 import type { HeartRateSource } from '../../input/HeartRateSource';
 import { toSessionRecord, type SessionRecord } from '../../sim/history';
@@ -7,7 +7,7 @@ import { expandProgram, totalDurationSec, type TrainingProgram } from '../../sim
 import { applyAdjustments, PROGRAM_CATALOG } from '../../sim/programs/catalog';
 import { OLEADAS } from '../../sim/programs/oleadas';
 import { RideSim } from '../../sim/RideSim';
-import { preRideRestReadings } from '../../sim/progress';
+import { preRideRestReadings, readiness, weekStartMs, type PlanPhase } from '../../sim/progress';
 import {
   applyAdvice,
   calibrationAdvice,
@@ -16,18 +16,22 @@ import {
   withRitualRest,
   type StoredRiderProfile,
 } from '../../sim/riderProfile';
-import type { RideSummary, SimEvent, SimState } from '../../sim/types';
+import type { RideRpe, RideSummary, SimEvent, SimState } from '../../sim/types';
+import { loadPlanState, savePlanState } from '../../storage/planStore';
 import { saveRiderProfile } from '../../storage/riderStore';
 import { saveSession } from '../../storage/sessionStore';
 import { Cyclist } from '../actors/Cyclist';
+import { Ghost } from '../actors/Ghost';
 import { Horde } from '../actors/Horde';
 import { ambientAudio } from '../ambientAudio';
 import { gameAudio } from '../audio';
 import { bikeAudio } from '../bikeAudio';
 import { Effects, ensureVignette } from '../effects';
+import { gapToPx } from '../gapMapping';
 import { proximityAudio } from '../proximityAudio';
 import { CueBanner } from '../hud/CueBanner';
 import { Hud } from '../hud/Hud';
+import { OfferBanner } from '../hud/OfferBanner';
 import { ResistanceControl } from '../hud/ResistanceControl';
 import { Atmosphere } from '../atmosphere';
 import { CalmPanel } from '../ride/CalmPanel';
@@ -41,6 +45,12 @@ import { releaseWakeLock } from '../wakeLock';
  * a 80 rpm). Es puro decorado; el sim no lo sabe ni le importa.
  */
 const VISUAL_RPM_PER_KPH = 80 / 26;
+const GOLD = '#d9b06a';
+/** El empujón se ofrece pasado este punto de la salida, una vez, solo en los fondos. */
+const PUSH_OFFER_AT = 0.4;
+const OFFER_MS = 15000;
+const SAFETY_NOTE =
+  'Si notas dolor en el pecho, mareo o falta de aire desproporcionada, para y consulta. Agua y ventilador a mano.';
 
 const sign = (pct: number): string => `${pct > 0 ? '+' : ''}${pct} %`;
 
@@ -60,10 +70,12 @@ export class RideScene extends Phaser.Scene {
   private sim!: RideSim;
   private atmosphere!: Atmosphere;
   private cyclist!: Cyclist;
+  private ghost!: Ghost;
   private horde!: Horde;
   private effects!: Effects;
   private hud!: Hud;
   private banner!: CueBanner;
+  private offer!: OfferBanner;
   private resistanceCtl: ResistanceControl | undefined;
   private vignette!: Phaser.GameObjects.Rectangle;
   private finishedShown = false;
@@ -71,6 +83,12 @@ export class RideScene extends Phaser.Scene {
   private startedAtMs = 0;
   private calm: CalmPanel | undefined;
   private preRideRestBpm: number | undefined;
+  /** Dónde ibas la última vez con este programa, cada gapTraceStepSec. */
+  private ghostTrace: readonly number[] | undefined;
+  private quitting = false;
+  private pushOffered = false;
+  /** El reposo del día no venía alto: se puede ofrecer el empujón. */
+  private readinessOk = true;
 
   constructor() {
     super('RideScene');
@@ -86,9 +104,14 @@ export class RideScene extends Phaser.Scene {
     this.startedAtMs = Date.now();
     this.preRideRestBpm = data?.preRideRestBpm;
     this.calm = undefined;
+    this.quitting = false;
+    this.pushOffered = false;
+    this.readinessOk = true;
+    this.ghostTrace = this.findGhostTrace(program, inputMode);
 
     this.atmosphere = new Atmosphere(this);
 
+    this.ghost = new Ghost(this);
     this.cyclist = new Cyclist(this);
     this.horde = new Horde(this);
     this.effects = new Effects(this);
@@ -98,8 +121,9 @@ export class RideScene extends Phaser.Scene {
     ambientAudio.start();
     bikeAudio.start();
 
-    this.hud = new Hud(this, { segments: expandProgram(program), onQuit: () => this.quitRide() });
+    this.hud = new Hud(this, { segments: expandProgram(program), onQuit: () => this.onQuitTap() });
     this.banner = new CueBanner(this, (finalPip) => gameAudio.playPip(finalPip));
+    this.offer = new OfferBanner(this);
     // La resistencia declarada solo mueve al ciclista en modo cadencia; en
     // modo pulso el esfuerzo ya la absorbe y el control sobra.
     this.resistanceCtl =
@@ -135,9 +159,11 @@ export class RideScene extends Phaser.Scene {
     if (inputMode === 'heartRate' && !data?.skipCalm) {
       this.calm = new CalmPanel(this, {
         source: heartRate,
-        history: (this.registry.get('sessionHistory') as SessionRecord[] | undefined) ?? [],
+        history: this.history(),
+        safetyNote: this.safetyNoteForThisWeek(),
         onStart: (restBpm) => this.beginRide(restBpm),
         onEasier: (restBpm) => this.switchToEasier(restBpm),
+        onRest: () => this.scene.start('StartScene'),
       });
     }
   }
@@ -152,15 +178,53 @@ export class RideScene extends Phaser.Scene {
     }
     // Tras terminar (o cortar) la salida el sim ya no avanza; el mundo sigue
     // respirando bajo el resumen.
-    if (!this.finishedShown) for (const event of this.sim.update(dt)) this.handleEvent(event, false);
+    if (!this.finishedShown) {
+      for (const event of this.sim.update(dt)) this.handleEvent(event, false);
+      this.offer.update();
+      this.maybeOfferPush(this.sim.state);
+    }
     this.draw(this.sim.state, dt);
+  }
+
+  private history(): SessionRecord[] {
+    return (this.registry.get('sessionHistory') as SessionRecord[] | undefined) ?? [];
+  }
+
+  /** La última salida completa con este mismo programa y la misma duración: su rastro es el fantasma. */
+  private findGhostTrace(program: TrainingProgram, inputMode: InputMode): readonly number[] | undefined {
+    if (inputMode === 'feel') return undefined;
+    const plannedSec = totalDurationSec(expandProgram(program));
+    const previous = this.history()
+      .filter(
+        (r) =>
+          r.programId === program.id &&
+          r.completed &&
+          r.plannedSec === plannedSec &&
+          r.inputMode !== 'feel' &&
+          r.gapTrace !== undefined &&
+          r.gapTrace.length > 0,
+      )
+      .at(-1);
+    return previous?.gapTrace;
+  }
+
+  /** El aviso de seguridad, una vez por semana en el ritual. */
+  private safetyNoteForThisWeek(): string | undefined {
+    const week = weekStartMs(Date.now());
+    if (loadPlanState().safetyNoteWeekMs === week) return undefined;
+    savePlanState({ safetyNoteWeekMs: week });
+    return SAFETY_NOTE;
   }
 
   private beginRide(restBpm: number | undefined): void {
     this.calm = undefined;
     this.preRideRestBpm = restBpm;
     this.startedAtMs = Date.now(); // el minuto de calma no es tiempo de salida
-    if (restBpm !== undefined) this.learnRestFromRitual(restBpm);
+    if (restBpm !== undefined) {
+      const verdict = readiness(this.history(), restBpm).state;
+      this.readinessOk = verdict === 'normal' || verdict === 'unknown';
+      this.learnRestFromRitual(restBpm);
+    }
   }
 
   /**
@@ -170,8 +234,7 @@ export class RideScene extends Phaser.Scene {
   private learnRestFromRitual(todayBpm: number): void {
     const stored = this.registry.get('riderProfileStored') as StoredRiderProfile | undefined;
     if (!stored) return;
-    const history = (this.registry.get('sessionHistory') as SessionRecord[] | undefined) ?? [];
-    const readings = [...preRideRestReadings(history), todayBpm].slice(-7);
+    const readings = [...preRideRestReadings(this.history()), todayBpm].slice(-7);
     if (readings.length < 3) return;
     const sorted = [...readings].sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
@@ -198,17 +261,21 @@ export class RideScene extends Phaser.Scene {
   }
 
   /**
-   * Cortar la salida antes del final: se guarda lo pedaleado (una salida
-   * corta cuenta para el hábito si pasó de cinco minutos) y se muestra el
-   * resumen sin celebración ni calibración.
+   * Terminar no corta en seco: el primer toque confirmado cambia lo que queda
+   * por dos minutos de enfriamiento con la horda parada; el siguiente acaba
+   * ya. Lo pedaleado se guarda siempre (una salida corta cuenta para el
+   * hábito si pasó de cinco minutos).
    */
-  private quitRide(): void {
+  private onQuitTap(): void {
     if (this.finishedShown) return;
-    const summary = this.sim.summary();
-    const record = this.recordSession(summary, false);
-    proximityAudio.stop();
-    bikeAudio.stop();
-    this.showFinished(summary, record, false);
+    if (!this.sim.state.coolingDown) {
+      this.quitting = true;
+      this.offer.hide();
+      this.sim.beginCooldown();
+      this.hud.setSegments(this.sim.currentSegments);
+      return;
+    }
+    this.sim.endNow();
   }
 
   adjustResistance(delta: number): void {
@@ -236,6 +303,33 @@ export class RideScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * El empujón opcional: en los fondos, una vez, pasado el 40 % de la salida,
+   * sin capturas y con el reposo del día normal. Aceptarlo mete un minuto en
+   * Z3 a cambio de ruta; rechazarlo no cuesta nada.
+   */
+  private maybeOfferPush(state: SimState): void {
+    if (this.pushOffered || this.offer.isOpen || this.program.id !== 'fondo') return;
+    if (state.inputMode === 'feel' || !state.pushAvailable || state.timesCaught > 0 || !this.readinessOk) return;
+    if (state.elapsedSec < state.totalSec * PUSH_OFFER_AT) return;
+    this.pushOffered = true;
+    this.offer.show({
+      text: `¿Un empujón? Un minuto en Z3 a cambio de ${SIM.push.bonusM} m de Ruta.`,
+      yesLabel: 'Sí, vamos',
+      noLabel: 'Hoy no',
+      durationMs: OFFER_MS,
+      onYes: () => {
+        if (this.sim.insertPush()) this.hud.setSegments(this.sim.currentSegments);
+      },
+    });
+  }
+
+  /** El resto de la salida en suave, con la línea de tiempo al día. */
+  private easeRest(): void {
+    this.sim.easeRemaining();
+    this.hud.setSegments(this.sim.currentSegments);
+  }
+
   private handleEvent(event: SimEvent, fastForward: boolean): void {
     switch (event.type) {
       case 'caught':
@@ -255,6 +349,9 @@ export class RideScene extends Phaser.Scene {
         if (event.segment.kind === 'surge') {
           this.banner.showNotice('¡¡OLEADA!!', 2500, UI.danger);
           if (!fastForward) proximityAudio.charge();
+        } else if (!fastForward && event.segment.cue) {
+          // La consigna del tramo, en cualquier modo: cuestas, empujón, enfriamiento.
+          this.banner.showNotice(event.segment.cue, 4500, event.segment.kind === 'push' ? GOLD : UI.info);
         } else if (event.segment.cueResistance !== undefined && this.resistanceCtl) {
           this.banner.showNotice(`Resistencia → ${event.segment.cueResistance}`, 4000, UI.info);
         }
@@ -269,18 +366,46 @@ export class RideScene extends Phaser.Scene {
           gameAudio.playThunder();
         }
         break;
+      case 'overMax':
+        if (!fastForward) this.banner.showNotice('AFLOJA: pulso sobre tu máximo. La horda se para.', 5000, UI.danger);
+        break;
+      case 'sustainedHigh': {
+        // Dos minutos muy alto: en arranque y base el resto va en suave; en
+        // rotación es un aviso, porque las oleadas piden exactamente eso.
+        const phase = this.registry.get('planPhase') as PlanPhase | undefined;
+        if (phase === undefined || phase === 'arranque' || phase === 'base') {
+          this.easeRest();
+          if (!fastForward) this.banner.showNotice('Dos minutos muy alto: el resto de la salida va en suave.', 6000, UI.warn);
+        } else if (!fastForward) {
+          this.banner.showNotice('Dos minutos muy alto: baja un punto.', 5000, UI.warn);
+        }
+        break;
+      }
       case 'healthDepleted':
         this.vignette.setAlpha(0.16);
+        if (!fastForward && !this.sim.state.eased && !this.sim.state.coolingDown) {
+          this.offer.show({
+            text: 'Salud a cero. ¿El resto de la salida en suave, con la horda lejos?',
+            yesLabel: 'Sí, en suave',
+            noLabel: 'No, sigo',
+            durationMs: OFFER_MS,
+            onYes: () => this.easeRest(),
+          });
+        }
+        break;
+      case 'pushDone':
+        if (!fastForward) this.banner.showNotice(`Empujón completado: +${event.bonusM} m de Ruta`, 4000, GOLD);
         break;
       case 'finished': {
         proximityAudio.stop();
         bikeAudio.stop();
-        const record = this.recordSession(event.summary, true);
-        this.showFinished(event.summary, record, true);
+        const completed = !this.quitting;
+        const record = this.recordSession(event.summary, completed);
+        this.showFinished(event.summary, record, completed);
         break;
       }
       default:
-        break; // staleCadence y surgeWarning se leen del estado en la HUD/banner
+        break; // staleCadence se lee del estado en la HUD
     }
   }
 
@@ -289,7 +414,7 @@ export class RideScene extends Phaser.Scene {
    * inmediato, y a IndexedDB para la próxima vez. Un fallo de disco no toca
    * el ride.
    */
-  private recordSession(summary: RideSummary, completed: boolean): SessionRecord {
+  private recordSession(summary: RideSummary, completed: boolean, rpe?: RideRpe): SessionRecord {
     const stored = this.registry.get('riderProfileStored') as StoredRiderProfile | undefined;
     const record = toSessionRecord({
       startedAtMs: this.startedAtMs,
@@ -300,8 +425,9 @@ export class RideScene extends Phaser.Scene {
       summary,
       hrRestBpm: stored?.hrRestBpm ?? RIDER.hrRestBpm,
       preRideRestBpm: this.preRideRestBpm,
+      rpe,
     });
-    const history = (this.registry.get('sessionHistory') as SessionRecord[] | undefined) ?? [];
+    const history = this.history();
     this.registry.set('sessionHistory', [...history.filter((r) => r.id !== record.id), record]);
     void saveSession(record);
     return record;
@@ -311,48 +437,58 @@ export class RideScene extends Phaser.Scene {
     if (this.finishedShown) return;
     this.finishedShown = true;
     this.hud.hideQuit();
+    this.offer.hide();
     releaseWakeLock(); // sesión terminada: la pantalla ya puede dormirse
     if (completed) gameAudio.playFinish();
 
-    const heartRateMode = this.sim.state.inputMode === 'heartRate';
-    const calibrationNote = heartRateMode && completed ? this.applyCalibration(summary) : undefined;
+    const mode = this.sim.state.inputMode;
     new FinishPanel(this, {
       summary,
       record,
-      history: (this.registry.get('sessionHistory') as SessionRecord[] | undefined) ?? [],
+      history: this.history(),
       completed,
-      heartRateMode,
-      calibrationNote,
+      mode,
+      onRpe: (rpe) => {
+        // La respuesta se guarda con la sesión, y la calibración aprende con ella.
+        this.recordSession(summary, completed, rpe);
+        return mode === 'heartRate' && completed ? this.applyCalibration(summary, rpe) : undefined;
+      },
+      onNextRide: (dayStartMs) => savePlanState({ nextRideDayMs: dayStartMs }),
       onBack: () => this.scene.start('StartScene'),
     });
   }
 
   /**
-   * La calibración se aprende de cada sesión: un pico sostenido por encima del
-   * máximo lo sube, y ser atrapado en tramos suaves (o no acercarse nunca con
-   * esfuerzo bajo) mueve la intensidad un punto. Devuelve la nota para el
-   * resumen, o undefined si no hubo cambios.
+   * La calibración se aprende de cada sesión, con el rider de acuerdo: un
+   * pico sostenido sube el máximo despacio y solo si la salida fue limpia y
+   * no le pareció demasiado; ser atrapado en tramos suaves (o "demasiado"
+   * habiendo seguido la zona) baja la exigencia; "fácil" sin apuros la sube.
+   * Devuelve la nota para el resumen, o undefined si no hubo cambios.
    */
-  private applyCalibration(summary: RideSummary): string | undefined {
+  private applyCalibration(summary: RideSummary, rpe: RideRpe): string | undefined {
     const stored = this.registry.get('riderProfileStored') as StoredRiderProfile | undefined;
     if (!stored) return undefined;
     const notes: string[] = [];
-    const { profile: withPeak, raised } = withObservedPeak(stored, summary.peakHeartRateBpm);
+    const { profile: withPeak, raised } = withObservedPeak(stored, summary.peakHeartRateBpm, {
+      allowRaise: summary.timesCaught === 0 && rpe !== 'hard',
+    });
     if (raised) notes.push(`Máximo actualizado a ${withPeak.hrMaxBpm} bpm por el pico de hoy.`);
-    const advice = calibrationAdvice(summary);
+    const advice = calibrationAdvice(summary, rpe);
     const next = applyAdvice(withPeak, advice);
     if (advice === 'lower' && next.intensityPct !== withPeak.intensityPct) {
       notes.push(
-        `Te alcanzaron ${summary.timesCaughtInEasy} veces en tramos suaves: intensidad a ${sign(next.intensityPct)}.`,
+        summary.timesCaughtInEasy >= 2
+          ? `Te alcanzaron ${summary.timesCaughtInEasy} veces en tramos suaves: intensidad a ${sign(next.intensityPct)}.`
+          : `Seguiste la zona y fue demasiado: intensidad a ${sign(next.intensityPct)}.`,
       );
     } else if (advice === 'raise' && next.intensityPct !== withPeak.intensityPct) {
-      notes.push(`Sin apuros y esfuerzo bajo: intensidad a ${sign(next.intensityPct)}.`);
+      notes.push(`Sin apuros y te pareció fácil: intensidad a ${sign(next.intensityPct)}.`);
     }
-    if (notes.length === 0) return undefined;
+    if (notes.length === 0 && withPeak === stored) return undefined;
     saveRiderProfile(next);
     this.registry.set('riderProfileStored', next);
     this.registry.set('riderProfile', toSimRider(next));
-    return notes.join('\n');
+    return notes.length > 0 ? notes.join('\n') : undefined;
   }
 
   private draw(state: SimState, dt: number): void {
@@ -363,7 +499,7 @@ export class RideScene extends Phaser.Scene {
     this.atmosphere.update(state.playerSpeedKph / 3.6, dt);
 
     const crankRpm =
-      state.inputMode === 'heartRate' ? state.playerSpeedKph * VISUAL_RPM_PER_KPH : state.cadenceRpm;
+      state.inputMode === 'cadence' ? state.cadenceRpm : state.playerSpeedKph * VISUAL_RPM_PER_KPH;
     const closeness = Math.max(0, Math.min(1, 1 - state.gapM / 40));
     const danger01 = Math.max(0, Math.min(1, 1 - state.gapM / 15));
     this.atmosphere.setDread(closeness);
@@ -375,6 +511,19 @@ export class RideScene extends Phaser.Scene {
     bikeAudio.update(state.playerSpeedKph);
     ambientAudio.update(night01, Math.max(0, Math.min(1, (progress - 0.88) / 0.12)));
 
+    // El fantasma: la ventaja que llevabas la última vez en este mismo
+    // minuto, puesta en la carretera respecto a la horda de hoy.
+    let ghostDeltaM: number | undefined;
+    const ghostGap = this.ghostTrace?.[Math.floor(state.elapsedSec / SIM.gapTraceStepSec)];
+    if (ghostGap !== undefined && !this.calm) {
+      const hordeX = RENDER.playerX - gapToPx(state.gapM);
+      const x = Math.max(hordeX + 40, Math.min(RENDER.width - 40, hordeX + gapToPx(ghostGap)));
+      this.ghost.update(dt, x, state.playerSpeedKph / 3.6);
+      ghostDeltaM = state.gapM - ghostGap;
+    } else {
+      this.ghost.update(dt, undefined, 0);
+    }
+
     // La cámara se acerca un pelín cuando los tienes encima y se balancea
     // con cada pedalada.
     const camera = this.cameras.main;
@@ -382,7 +531,7 @@ export class RideScene extends Phaser.Scene {
     camera.setZoom(camera.zoom + (targetZoom - camera.zoom) * Math.min(1, dt * 3));
     camera.scrollY = crankRpm > 5 ? Math.sin(this.cyclist.crank * 2) * 1.3 : 0;
 
-    this.hud.update(state);
+    this.hud.update(state, { ghostDeltaM });
     this.banner.update(state);
     this.resistanceCtl?.update(state.resistanceLevel);
   }

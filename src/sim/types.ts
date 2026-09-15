@@ -63,6 +63,8 @@ export interface SimState {
   easeOff: boolean;
   /** Enfriamiento tras Terminar: la horda parada, el programa acaba en breve. */
   coolingDown: boolean;
+  /** El resto de la salida va en suave (salud a cero, pulso muy alto sostenido). */
+  eased: boolean;
   /** Se puede insertar el empujón opcional ahora (tramo continuo, aún no usado). */
   pushAvailable: boolean;
   playerSpeedKph: number;

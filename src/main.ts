@@ -13,6 +13,7 @@ import { loadRiderProfile } from './storage/riderStore';
 import { loadSessions } from './storage/sessionStore';
 import { sfx } from './game/sfx';
 import { registerServiceWorker } from './pwa';
+import { loadPlanState } from './storage/planStore';
 
 registerServiceWorker();
 
@@ -45,6 +46,9 @@ game.registry.set('band', new BandConnection(game.registry, heartRate));
 const stored = loadRiderProfile();
 game.registry.set('riderProfileStored', stored);
 game.registry.set('riderProfile', toSimRider(stored));
+
+// Quien no puede fiarse del pulso (cribado) eligió el modo por sensación.
+if (loadPlanState().inputMode === 'feel') game.registry.set('inputMode', 'feel');
 
 // El historial de salidas llega de IndexedDB de forma asíncrona; hasta
 // entonces el campamento arranca vacío y se refresca al llegar.
