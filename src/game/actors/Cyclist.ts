@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { RENDER } from '../../config';
+import { slopeRotation } from '../gapMapping';
 
 // El ciclista, redibujado por frame: las bielas giran con TU cadencia real,
 // las piernas las siguen con IK de dos huesos, las ruedas con la velocidad y
@@ -53,6 +54,7 @@ export class Cyclist {
   /** 0 = erguido y tranquilo, 1 = recogido sobre el manillar, a tope. Con inercia. */
   private tuck = 0;
   private speedMps = 0;
+  private slope = 0;
 
   constructor(scene: Phaser.Scene) {
     this.gfx = scene.add.graphics({ x: RENDER.playerX, y: RENDER.groundY }).setDepth(3);
@@ -68,11 +70,12 @@ export class Cyclist {
    * @param effort01 fracción de esfuerzo cardíaco: la postura la cuenta. En
    * Z1 el rider va erguido; en Z4-Z5 se recoge sobre el manillar.
    */
-  update(dt: number, rpm: number, speedMps: number, effort01 = 0): void {
+  update(dt: number, rpm: number, speedMps: number, effort01 = 0, slope = 0): void {
     this.tAlive += dt;
     this.crankAngle += (rpm / 60) * Math.PI * 2 * dt;
     this.wheelAngle += (speedMps / 0.35) * dt;
     this.speedMps = speedMps;
+    this.slope = slope;
     const targetTuck = Math.max(0, Math.min(1, (effort01 - 0.45) / 0.45));
     this.tuck += (targetTuck - this.tuck) * Math.min(1, dt * 0.8);
     this.draw(rpm);
@@ -87,7 +90,8 @@ export class Cyclist {
     const lift = pedaling
       ? Math.sin(this.crankAngle * 2) * Math.min(1.6, 0.6 + (rpm / 60) * 0.5)
       : Math.sin(this.tAlive * 1.6) * 0.7;
-    g.rotation = pedaling ? Math.sin(this.crankAngle) * 0.01 : 0;
+    // Balanceo por pedalada, y la bici apoyada en la pendiente de la carretera.
+    g.rotation = (pedaling ? Math.sin(this.crankAngle) * 0.01 : 0) + slopeRotation(this.slope);
     const tuck = this.tuck;
 
     // Faro delantero.

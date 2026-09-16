@@ -8,14 +8,17 @@ import { isCountable, type SessionRecord } from '../../sim/history';
 import {
   INTENSITY_MAX,
   INTENSITY_MIN,
+  reserveWarning,
   STEP_TEST_FROM_RIDES,
   stepTestDue,
   toSimRider,
   withAge,
   withIntensity,
   withManualMax,
+  withMaxFromAge,
   withRest,
   withStepTest,
+  zoneWidthBpm,
   type StoredRiderProfile,
 } from '../../sim/riderProfile';
 import { saveRiderProfile } from '../../storage/riderStore';
@@ -86,6 +89,7 @@ export class ProfilePanel {
   private restSourceText!: Phaser.GameObjects.Text;
   private maxText!: Phaser.GameObjects.Text;
   private maxSourceText!: Phaser.GameObjects.Text;
+  private reserveText!: Phaser.GameObjects.Text;
   private stepText!: Phaser.GameObjects.Text;
   private stepNoteText!: Phaser.GameObjects.Text;
   private stepButton!: ReturnType<typeof makeTextButton>;
@@ -156,11 +160,24 @@ export class ProfilePanel {
     this.stepper(2, (d) => this.setProfile(withRest(this.profile, this.profile.hrRestBpm + d)));
     this.restSourceText = this.note(2);
 
-    // Fila 3: máximo
+    // Fila 3: máximo, con vuelta a la estimación por edad a un toque (tocarlo
+    // a mano latido a latido no es camino para deshacer un error).
     this.label(3, 'Máximo');
-    this.maxText = this.value(3, '');
+    this.maxText = this.value(3, '').setY(this.rowY(3) - 8);
     this.stepper(3, (d) => this.setProfile(withManualMax(this.profile, this.profile.hrMaxBpm + d)));
-    this.maxSourceText = this.note(3);
+    this.maxSourceText = this.scene.add
+      .text(VALUE_X, this.rowY(3) + 16, '', { fontFamily: FONT_SANS, fontSize: '13px', color: UI.textDim })
+      .setOrigin(0.5)
+      .setDepth(DEPTH + 1);
+    this.objects.push(this.maxSourceText);
+    this.action(3, 'Por edad', () => this.setProfile(withMaxFromAge(this.profile)));
+    // Aviso de reserva estrecha: las zonas son el 10 % de la reserva, y con
+    // pocos latidos por zona la salida es perseguir un número.
+    this.reserveText = this.scene.add
+      .text(cx, this.rowY(5) + 40, '', { fontFamily: FONT_SANS, fontSize: '15px', color: UI.warn, align: 'center', wordWrap: { width: PANEL_W - 80 } })
+      .setOrigin(0.5)
+      .setDepth(DEPTH + 1);
+    this.objects.push(this.reserveText);
 
     // Fila 4: escalera
     this.label(4, 'Escalera');
@@ -179,7 +196,7 @@ export class ProfilePanel {
 
     // Pie: estado de la prueba en curso y cerrar
     this.testText = this.scene.add
-      .text(cx, this.rowY(6) + 10, '', { fontFamily: FONT_SANS, fontSize: '19px', color: UI.info, align: 'center' })
+      .text(cx, this.rowY(6) + 24, '', { fontFamily: FONT_SANS, fontSize: '19px', color: UI.info, align: 'center' })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
     const close = makeTextButton(this.scene, cx, RENDER.height - 76, 220, 56, 'Cerrar', () => this.close(), DEPTH + 1, 24);
@@ -244,7 +261,10 @@ export class ProfilePanel {
     this.restText.setText(`${p.hrRestBpm} bpm`);
     this.restSourceText.setText(REST_SOURCE_ES[p.hrRestSource ?? 'default']);
     this.maxText.setText(`${p.hrMaxBpm} bpm`);
-    this.maxSourceText.setText(MAX_SOURCE_ES[p.hrMaxSource]);
+    this.maxSourceText.setText(`${MAX_SOURCE_ES[p.hrMaxSource]} · zonas de ${zoneWidthBpm(p).toFixed(1).replace('.', ',')} latidos`);
+    const warning = reserveWarning(p);
+    this.reserveText.setText(warning ?? '');
+    this.maxText.setColor(warning ? UI.warn : UI.textBright);
     this.stepText.setText(
       p.anchorBpm !== undefined && p.hardBpm !== undefined
         ? `cómodo ${p.anchorBpm} · fuerte ${p.hardBpm}`

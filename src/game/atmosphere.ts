@@ -1,6 +1,12 @@
 import Phaser from 'phaser';
 import { RENDER } from '../config';
+import { groundYAt, slopeRotation } from './gapMapping';
 import { lcg } from './rng';
+
+/** La carretera y los matorrales se inclinan pivotando en los pies del ciclista; anchos de sobra para no dejar huecos. */
+const SLOPE_LAYER_W = 2600;
+/** Tiempo característico del cambio de pendiente: la cuesta empieza, no aparece. */
+const SLOPE_EASE_SEC = 1.2;
 
 // Atmósfera en siluetas que avanza con el programa: la salida empieza al
 // anochecer, el grueso del trabajo es noche cerrada, y la vuelta a la calma
@@ -522,6 +528,9 @@ export class Atmosphere {
   private dread = 0;
   private roadScroll = 0;
   private tAlive = 0;
+  /** Pendiente de pantalla (tangente) actual y objetivo; ver setSlope. */
+  private slopeNow = 0;
+  private slopeTarget = 0;
   private birds: Bird[] = [];
   private nextFlockSec = 3;
   private shooting: ShootingStar | undefined;
@@ -562,8 +571,16 @@ export class Atmosphere {
       .tileSprite(0, HORIZON_Y - 150, w, 160, 'atm-fog')
       .setOrigin(0, 0)
       .setAlpha(0.3);
-    this.near = scene.add.tileSprite(0, HORIZON_Y - 100, w, 100, 'atm-near').setOrigin(0, 0);
-    this.road = scene.add.tileSprite(0, HORIZON_Y - 10, w, 130, 'atm-road').setOrigin(0, 0);
+    // Matorrales y carretera pivotan en los pies del ciclista para inclinarse
+    // en las cuestas: origen en ese punto, anchura de sobra, rotación en update.
+    const pivotX = RENDER.playerX;
+    const originX = (pivotX + (SLOPE_LAYER_W - w) / 2) / SLOPE_LAYER_W;
+    this.near = scene.add
+      .tileSprite(pivotX, RENDER.groundY, SLOPE_LAYER_W, 100, 'atm-near')
+      .setOrigin(originX, (RENDER.groundY - (HORIZON_Y - 100)) / 100);
+    this.road = scene.add
+      .tileSprite(pivotX, RENDER.groundY, SLOPE_LAYER_W, 130, 'atm-road')
+      .setOrigin(originX, (RENDER.groundY - (HORIZON_Y - 10)) / 130);
 
     // Farolas al borde del asfalto: pasan con la carretera, por detrás de los actores.
     for (const spec of withLamps ? LAMPS : []) {
@@ -606,8 +623,22 @@ export class Atmosphere {
     this.flash = 1;
   }
 
+  /** Pendiente objetivo (tangente de pantalla, ver slopeForGrade); llega suavizada. */
+  setSlope(slope: number): void {
+    this.slopeTarget = slope;
+  }
+
+  /** La pendiente ya suavizada: los actores se apoyan en ella. */
+  get slope(): number {
+    return this.slopeNow;
+  }
+
   update(playerSpeedMps: number, dtSec: number): void {
     this.tAlive += dtSec;
+    this.slopeNow += (this.slopeTarget - this.slopeNow) * Math.min(1, dtSec / SLOPE_EASE_SEC);
+    const rotation = slopeRotation(this.slopeNow);
+    this.road.setRotation(rotation);
+    this.near.setRotation(rotation);
     const px = playerSpeedMps * RENDER.groundPxPerMeter * dtSec;
     this.roadScroll += px;
     this.road.tilePositionX += px;
@@ -692,9 +723,11 @@ export class Atmosphere {
       const raw = ((lamp.offset - this.roadScroll) % LAMP_PERIOD_PX + LAMP_PERIOD_PX) % LAMP_PERIOD_PX;
       const x = raw - 200;
       const visible = x > -60 && x < RENDER.width + 60;
-      lamp.post.setVisible(visible).setX(x);
-      lamp.cone.setVisible(visible).setX(x + 20);
-      lamp.pool.setVisible(visible).setX(x + 20);
+      // En cuesta la farola sigue vertical, pero su pie va con la carretera.
+      const dy = groundYAt(x + 20, this.slopeNow) - RENDER.groundY;
+      lamp.post.setVisible(visible).setPosition(x, HORIZON_Y + 6 + dy);
+      lamp.cone.setVisible(visible).setPosition(x + 20, HORIZON_Y - 150 + dy);
+      lamp.pool.setVisible(visible).setPosition(x + 20, HORIZON_Y + 16 + dy);
       if (!visible) continue;
 
       if (lamp.kind === 'flicker') {

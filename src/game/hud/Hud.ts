@@ -218,7 +218,9 @@ export class Hud {
     const segName =
       seg.kind === 'surge' && seg.waveNumber !== undefined
         ? `Oleada ${seg.waveNumber}/${seg.waveTotal}`
-        : (KIND_ES[seg.kind] ?? seg.kind);
+        : seg.grade !== undefined && seg.grade > 0
+          ? `Cuesta ▲ ${seg.grade} %`
+          : (KIND_ES[seg.kind] ?? seg.kind);
     const nextLine = seg.next
       ? `Sigue: ${KIND_ES[seg.next.kind] ?? seg.next.kind} · ${zoneLabel(seg.next.zoneMin, seg.next.zoneMax)}`
       : 'Último tramo';

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { RENDER } from '../../config';
+import { groundYAt, slopeRotation } from '../gapMapping';
 
 // Tu fantasma: dónde ibas la última vez con este mismo programa, en este
 // mismo minuto. Una silueta pálida delante o detrás de ti; competir contigo
@@ -22,7 +23,7 @@ export class Ghost {
   }
 
   /** @param x posición en pantalla, o undefined para ocultarlo. */
-  update(dt: number, x: number | undefined, speedMps: number): void {
+  update(dt: number, x: number | undefined, speedMps: number, slope = 0): void {
     if (x === undefined) {
       this.gfx.setVisible(false);
       return;
@@ -31,6 +32,8 @@ export class Ghost {
     this.wheelAngle += (speedMps / 0.35) * dt;
     this.gfx.setVisible(true);
     this.gfx.x += (x - this.gfx.x) * Math.min(1, dt * 4); // se desliza, no salta
+    this.gfx.y = groundYAt(this.gfx.x, slope);
+    this.gfx.setRotation(slopeRotation(slope));
     this.draw();
   }
 

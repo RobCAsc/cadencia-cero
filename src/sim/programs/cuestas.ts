@@ -17,6 +17,7 @@ export const CUESTAS: TrainingProgram = {
       zone: [2, 3],
       cueResistance: 5,
       cue: 'Cuesta: sube resistencia, cadencia baja',
+      grade: 6,
     },
     { kind: 'recover', durationSec: 120, zone: [1, 2], cueResistance: 2, cue: 'Llano: baja resistencia, gira ligero' },
     { kind: 'repeat', times: 4, fromIndex: 1 },

@@ -27,7 +27,7 @@ import { ambientAudio } from '../ambientAudio';
 import { gameAudio } from '../audio';
 import { bikeAudio } from '../bikeAudio';
 import { Effects, ensureVignette } from '../effects';
-import { gapToPx } from '../gapMapping';
+import { gapToPx, slopeForGrade } from '../gapMapping';
 import { proximityAudio } from '../proximityAudio';
 import { CueBanner } from '../hud/CueBanner';
 import { Hud } from '../hud/Hud';
@@ -496,17 +496,20 @@ export class RideScene extends Phaser.Scene {
     const progress = state.totalSec > 0 ? state.elapsedSec / state.totalSec : 0;
     const night01 = Math.max(0, Math.min((progress - 0.05) / 0.15, (0.9 - progress) / 0.1, 1));
     this.atmosphere.setProgress(progress);
+    // El terreno se empina en las cuestas: la consigna de resistencia, hecha visible.
+    this.atmosphere.setSlope(slopeForGrade(state.segment.grade ?? 0));
     this.atmosphere.update(state.playerSpeedKph / 3.6, dt);
+    const slope = this.atmosphere.slope;
 
     const crankRpm =
       state.inputMode === 'cadence' ? state.cadenceRpm : state.playerSpeedKph * VISUAL_RPM_PER_KPH;
     const closeness = Math.max(0, Math.min(1, 1 - state.gapM / 40));
     const danger01 = Math.max(0, Math.min(1, 1 - state.gapM / 15));
     this.atmosphere.setDread(closeness);
-    this.cyclist.update(dt, crankRpm, state.playerSpeedKph / 3.6, state.effortFrac);
-    this.horde.update(dt, state.gapM, state.zombieSpeedKph, state.caughtGraceSec > 0);
-    this.effects.update(state.playerSpeedKph / 3.6, dt, night01, danger01);
-    this.effects.updateHorde(this.horde.screenX, this.horde.run01);
+    this.cyclist.update(dt, crankRpm, state.playerSpeedKph / 3.6, state.effortFrac, slope);
+    this.horde.update(dt, state.gapM, state.zombieSpeedKph, state.caughtGraceSec > 0, slope);
+    this.effects.update(state.playerSpeedKph / 3.6, dt, night01, danger01, slope);
+    this.effects.updateHorde(this.horde.screenX, this.horde.run01, slope);
     proximityAudio.update(state.gapM, this.horde.run01, dt);
     bikeAudio.update(state.playerSpeedKph);
     ambientAudio.update(night01, Math.max(0, Math.min(1, (progress - 0.88) / 0.12)));
@@ -518,10 +521,10 @@ export class RideScene extends Phaser.Scene {
     if (ghostGap !== undefined && !this.calm) {
       const hordeX = RENDER.playerX - gapToPx(state.gapM);
       const x = Math.max(hordeX + 40, Math.min(RENDER.width - 40, hordeX + gapToPx(ghostGap)));
-      this.ghost.update(dt, x, state.playerSpeedKph / 3.6);
+      this.ghost.update(dt, x, state.playerSpeedKph / 3.6, slope);
       ghostDeltaM = state.gapM - ghostGap;
     } else {
-      this.ghost.update(dt, undefined, 0);
+      this.ghost.update(dt, undefined, 0, slope);
     }
 
     // La cámara se acerca un pelín cuando los tienes encima y se balancea

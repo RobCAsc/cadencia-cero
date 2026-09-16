@@ -532,6 +532,7 @@ export class RideSim {
         zoneMax: seg.zoneMax,
         remainingSec,
         cue: seg.cue,
+        grade: seg.grade,
         waveNumber: seg.waveNumber,
         waveTotal: seg.waveTotal,
         next: next

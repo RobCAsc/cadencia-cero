@@ -56,6 +56,13 @@ export const STEP_RETEST_DAYS = 42;
 export const STEP_RETEST_REST_DROP_BPM = 5;
 /** La escalera (con su escalón "no puedes hablar") se ofrece a partir de esta salida. */
 export const STEP_TEST_FROM_RIDES = 6;
+/**
+ * Reserva cardíaca (máximo − reposo) mínima que el juego acepta: cada zona
+ * es el 10 % de la reserva, y con menos de 60 latidos de reserva las zonas
+ * miden seis o menos, que nadie puede mantener. Por debajo de 80 se avisa.
+ */
+export const MIN_RESERVE_BPM = 60;
+export const NARROW_RESERVE_BPM = 80;
 
 /** Tanaka (2001): acierta mejor que 220 − edad, con error típico de ~10 bpm. */
 export function hrMaxFromAge(ageYears: number): number {
@@ -142,6 +149,24 @@ export function withRitualRest(p: StoredRiderProfile, medianBpm: number): Stored
 
 export function withManualMax(p: StoredRiderProfile, hrMaxBpm: number): StoredRiderProfile {
   return ensureRange({ ...p, hrMaxBpm: Math.round(hrMaxBpm), hrMaxSource: 'manual' });
+}
+
+/** Volver a la estimación por edad, olvidando el ajuste a mano o la escalera (el pico observado queda anotado). */
+export function withMaxFromAge(p: StoredRiderProfile): StoredRiderProfile {
+  return ensureRange({ ...p, hrMaxBpm: hrMaxFromAge(p.ageYears), hrMaxSource: 'age' });
+}
+
+/** Latidos que mide cada zona con este perfil: el 10 % de la reserva. */
+export function zoneWidthBpm(p: { hrMaxBpm: number; hrRestBpm: number }): number {
+  return (p.hrMaxBpm - p.hrRestBpm) / 10;
+}
+
+/** Aviso cuando la reserva es tan corta que las zonas no se pueden mantener; undefined si está bien. */
+export function reserveWarning(p: { hrMaxBpm: number; hrRestBpm: number }): string | undefined {
+  const reserve = p.hrMaxBpm - p.hrRestBpm;
+  if (reserve >= NARROW_RESERVE_BPM) return undefined;
+  const width = Math.round(zoneWidthBpm(p));
+  return `Reserva de ${reserve} latidos: cada zona mide ${width}. Imposible de mantener; usa el máximo por edad o la escalera.`;
 }
 
 /** El ritmo cómodo medido (una ancla) manda sobre la edad, pero no sobre un pico observado mayor. */
@@ -274,7 +299,9 @@ export function applyAdvice(p: StoredRiderProfile, advice: CalibrationAdvice): S
 }
 
 function ensureRange(p: StoredRiderProfile): StoredRiderProfile {
-  // El sim exige máx > reposo; garantizamos un rango mínimo utilizable.
-  if (p.hrMaxBpm - p.hrRestBpm < 40) return { ...p, hrMaxBpm: p.hrRestBpm + 40 };
+  // El sim exige máx > reposo, y el juego una reserva con la que las zonas
+  // sean sostenibles: con reposo 69 y máximo 120 cada zona medía cinco
+  // latidos y la salida fue perseguir un número (real, 2026-09-15).
+  if (p.hrMaxBpm - p.hrRestBpm < MIN_RESERVE_BPM) return { ...p, hrMaxBpm: p.hrRestBpm + MIN_RESERVE_BPM };
   return p;
 }

@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { RENDER } from '../../config';
-import { gapToPx, hordeScale } from '../gapMapping';
+import { gapToPx, groundYAt, hordeScale, slopeRotation } from '../gapMapping';
 import { lcg } from '../rng';
 import { Zombie } from './Zombie';
 
@@ -83,13 +83,16 @@ export class Horde {
     }
   }
 
-  update(dt: number, gapM: number, zombieKph: number, stumbling: boolean): void {
+  /** @param slope pendiente de pantalla (tangente): en cuesta la manada viene desde más abajo. */
+  update(dt: number, gapM: number, zombieKph: number, stumbling: boolean, slope = 0): void {
     const zombieMps = zombieKph / 3.6;
     const run01 = Math.max(0, Math.min(1, (zombieKph - WALK_KPH) / (RUN_KPH - WALK_KPH)));
     const closeness = Math.max(0, Math.min(1, 1 - gapM / 40));
 
     this.lungePx *= Math.exp(-9 * dt);
     this.container.x = RENDER.playerX - 30 - gapToPx(gapM) + this.lungePx;
+    this.container.y = groundYAt(this.container.x, slope);
+    this.container.setRotation(slopeRotation(slope));
     const s = hordeScale(gapM) * ACTOR_SCALE;
     this.container.setScale(s, stumbling ? s * 0.94 : s);
     this.container.setAlpha(gapM > 100 ? 0.85 : 1);

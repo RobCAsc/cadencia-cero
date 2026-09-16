@@ -34,6 +34,8 @@ export interface SegmentInfo {
   remainingSec: number;
   /** Consigna del tramo para el rider (resistencia, enfriamiento, empujón). */
   cue?: string;
+  /** Pendiente del terreno en %, para la carretera y la HUD. */
+  grade?: number;
   waveNumber?: number;
   waveTotal?: number;
   next?: SegmentNextInfo;

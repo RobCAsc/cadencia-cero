@@ -16,7 +16,7 @@ import {
   weekStartMs,
   type Recommendation,
 } from '../../sim/progress';
-import { stepTestDue, type StoredRiderProfile } from '../../sim/riderProfile';
+import { reserveWarning, stepTestDue, zoneWidthBpm, type StoredRiderProfile } from '../../sim/riderProfile';
 import { loadPlanState, savePlanState, type PlanState } from '../../storage/planStore';
 import { Atmosphere } from '../atmosphere';
 import { gameAudio } from '../audio';
@@ -267,12 +267,14 @@ export class StartScene extends Phaser.Scene {
     const sign = p.intensityPct > 0 ? '+' : '';
     const due = stepTestDue(p, Date.now());
     const stepNote = due === 'stale' || due === 'restDropped' ? '  ·  escalera: toca repetirla' : '';
+    const narrow = reserveWarning(p) !== undefined;
+    const reserveNote = narrow ? `  ·  ZONAS DE ${Math.round(zoneWidthBpm(p))} LATIDOS: revisa el máximo` : '';
     this.statusText.setText(
       feel
         ? `Modo por sensación: los tramos van por tiempo y la guía es la prueba del habla  ·  ${bandText}`
-        : `${bandText}  ·  ${p.ageYears} años  ·  reposo ${p.hrRestBpm}  ·  máx ${p.hrMaxBpm}  ·  intensidad ${sign}${p.intensityPct} %${stepNote}`,
+        : `${bandText}  ·  ${p.ageYears} años  ·  reposo ${p.hrRestBpm}  ·  máx ${p.hrMaxBpm}  ·  intensidad ${sign}${p.intensityPct} %${stepNote}${reserveNote}`,
     );
-    this.statusText.setColor(band.isConnected() || feel ? UI.textMuted : UI.textDim);
+    this.statusText.setColor(narrow ? UI.warn : band.isConnected() || feel ? UI.textMuted : UI.textDim);
   }
 
   private openProfile(): void {

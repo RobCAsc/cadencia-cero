@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { RENDER } from '../config';
+import { groundYAt, slopeRotation } from './gapMapping';
 
 // Partículas y luz: polvo tras la rueda proporcional a la velocidad, sangre
 // al ser atrapado, el charco del faro sobre el asfalto, el aliento del rider
@@ -184,9 +185,13 @@ export class Effects {
    * y las luciérnagas son cosa de la noche.
    * @param danger01 0 lejos … 1 con la horda a punto de alcanzarte.
    */
-  update(speedMps: number, dt: number, night01: number, danger01: number): void {
+  update(speedMps: number, dt: number, night01: number, danger01: number, slope = 0): void {
     this.tAlive += dt;
     this.headlight.setAlpha(0.5 + Math.sin(this.tAlive * 37) * 0.03 + Math.sin(this.tAlive * 7.3) * 0.04);
+    // El faro y el polvo de la rueda siguen la carretera inclinada.
+    this.headlight.setPosition(RENDER.playerX + 200, groundYAt(RENDER.playerX + 200, slope) - 4);
+    this.headlight.setRotation(slopeRotation(slope));
+    this.dust.setPosition(RENDER.playerX - 48, groundYAt(RENDER.playerX - 48, slope) - 3);
 
     if (speedMps < 2) {
       this.dust.emitting = false;
@@ -210,8 +215,8 @@ export class Effects {
   }
 
   /** Dónde está la horda en pantalla y cuánto corre: su polvareda la sigue. */
-  updateHorde(screenX: number, run01: number): void {
-    this.hordeDust.setPosition(screenX, RENDER.groundY - 6);
+  updateHorde(screenX: number, run01: number, slope = 0): void {
+    this.hordeDust.setPosition(screenX, groundYAt(screenX, slope) - 6);
     if (run01 > 0.15) {
       this.hordeDust.emitting = true;
       this.hordeDust.frequency = 170 - run01 * 120;

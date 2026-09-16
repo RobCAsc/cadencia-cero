@@ -14,11 +14,15 @@ import {
   withRest,
   hrMaxFromStepTest,
   MAX_AGE_TOLERANCE_BPM,
+  MIN_RESERVE_BPM,
   PEAK_RAISE_PER_RIDE_BPM,
+  reserveWarning,
   STEP_RETEST_DAYS,
   stepTestDue,
+  withMaxFromAge,
   withRitualRest,
   withStepTest,
+  zoneWidthBpm,
 } from './riderProfile';
 import type { RideSummary } from './types';
 
@@ -99,9 +103,18 @@ describe('perfil del rider', () => {
     expect(withObservedPeak(defaultRiderProfile(33), 240).raised).toBe(false);
   });
 
-  it('garantiza un rango mínimo entre reposo y máximo', () => {
+  it('garantiza una reserva mínima entre reposo y máximo, y avisa cuando es estrecha', () => {
     const p = withManualMax(defaultRiderProfile(33), 70);
-    expect(p.hrMaxBpm - p.hrRestBpm).toBeGreaterThanOrEqual(40);
+    expect(p.hrMaxBpm - p.hrRestBpm).toBe(MIN_RESERVE_BPM);
+    // Reposo 69 y máximo 120: la reserva de 51 se sube a 60, y aun así avisa (zonas de 6).
+    const narrow = withManualMax(withRest(defaultRiderProfile(33), 69), 120);
+    expect(narrow.hrMaxBpm).toBe(69 + MIN_RESERVE_BPM);
+    expect(zoneWidthBpm(narrow)).toBe(6);
+    expect(reserveWarning(narrow)).toContain('cada zona mide 6');
+    expect(reserveWarning(defaultRiderProfile(33))).toBeUndefined(); // reserva 125: zonas de 12,5
+    // Volver a la edad deshace el ajuste a mano.
+    const byAge = withMaxFromAge(narrow);
+    expect(byAge).toMatchObject({ hrMaxBpm: 185, hrMaxSource: 'age' });
   });
 
   it('la intensidad se acota y se traduce en escala de esfuerzo', () => {

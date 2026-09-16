@@ -22,6 +22,8 @@ export interface SpeedSegment {
   cueResistance?: number;
   /** Consigna en texto al entrar al tramo, en cualquier modo ("sube resistencia, cadencia baja"). */
   cue?: string;
+  /** Pendiente del terreno en %, solo presentación: la carretera se inclina y la HUD lo dice. */
+  grade?: number;
 }
 
 export interface RepeatSegment {
