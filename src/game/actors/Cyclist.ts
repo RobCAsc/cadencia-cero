@@ -7,13 +7,22 @@ import { slopeRotation } from '../gapMapping';
 // el faro delantero corta la noche. Cuando dejas de pedalear, se queda quieto
 // respirando — y la horda sigue caminando.
 
-const BODY = 0x131a2e;
-const BIKE = 0x212e4e;
-const RIM = 0x2c3c63;
-const TIRE = 0x0c1120;
-const ACCENT = 0x35d0c0;
+// Dos tonos más claros que el fondo cercano (0x06070f) y que el asfalto: el
+// rider se leía como una sombra más. Encima, un borde de luz de luna en la
+// silueta, bandas reflectantes y un charco de luz detrás, como la horda.
+const BODY = 0x2e3d63;
+const JACKET = 0x4d629a;
+const BIKE = 0x3f5384;
+const RIM = 0x7f96c4;
+const TIRE = 0x1b2238;
+const ACCENT = 0x5ff0dc;
 const REAR_LIGHT = 0xff4444;
 const LIGHT = 0xffe9b0;
+/** Luz de luna en el borde de la silueta y en lo reflectante. */
+const RIM_LIGHT = 0xc4d6ec;
+const REFLECTIVE = 0xeaf2ff;
+const RIM_LIGHT_ALPHA = 0.55;
+const RIM_LIGHT_EXTRA_W = 2.6;
 
 const WHEEL_R = 15;
 const AXLE_Y = -WHEEL_R;
@@ -48,6 +57,7 @@ function solveKnee(hip: Point, target: Point, l1: number, l2: number): Point {
 
 export class Cyclist {
   private readonly gfx: Phaser.GameObjects.Graphics;
+  private readonly glow: Phaser.GameObjects.Image;
   private crankAngle = 0;
   private wheelAngle = 0;
   private tAlive = 0;
@@ -57,6 +67,22 @@ export class Cyclist {
   private slope = 0;
 
   constructor(scene: Phaser.Scene) {
+    // Charco de luz de luna tras el rider: garantiza contraste con el fondo
+    // cercano, que en noche cerrada es casi negro.
+    if (!scene.textures.exists('rider-glow')) {
+      const g = scene.make.graphics({ x: 0, y: 0 }, false);
+      for (let i = 7; i >= 1; i--) {
+        g.fillStyle(0xb8cfe0, 0.045);
+        g.fillEllipse(160, 90, 40 + i * 34, 30 + i * 22);
+      }
+      g.generateTexture('rider-glow', 320, 180);
+      g.destroy();
+    }
+    this.glow = scene.add
+      .image(RENDER.playerX - 6, RENDER.groundY - 62, 'rider-glow')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setAlpha(0.9)
+      .setDepth(2.6);
     this.gfx = scene.add.graphics({ x: RENDER.playerX, y: RENDER.groundY }).setDepth(3);
     this.gfx.setScale(1.4);
   }
@@ -121,6 +147,8 @@ export class Cyclist {
     g.lineStyle(4.5, BODY, 0.7);
     g.lineBetween(hip.x, hip.y, kneeFar.x, kneeFar.y);
     g.lineBetween(kneeFar.x, kneeFar.y, pedalFar.x, pedalFar.y);
+    g.fillStyle(REFLECTIVE, 0.6);
+    g.fillCircle(pedalFar.x, pedalFar.y - 3, 1.6); // banda reflectante del tobillo lejano
 
     // Ruedas.
     for (const axle of [REAR_AXLE, FRONT_AXLE]) {
@@ -167,53 +195,64 @@ export class Cyclist {
     // Chaqueta: ondea hacia atrás con la velocidad.
     const flap = Math.min(1, this.speedMps / 9);
     const wave = Math.sin(this.tAlive * 15) * 2 * flap;
-    g.fillStyle(BODY, 0.85);
-    g.fillTriangle(
-      shoulder.x - 4,
-      shoulder.y + 2,
-      hip.x - 3,
-      hip.y - 2,
-      hip.x - 9 - flap * 8,
-      hip.y - 8 + wave,
-    );
+    const jacketTail: Point = { x: hip.x - 9 - flap * 8, y: hip.y - 8 + wave };
+    g.fillStyle(JACKET, 0.9);
+    g.fillTriangle(shoulder.x - 4, shoulder.y + 2, hip.x - 3, hip.y - 2, jacketTail.x, jacketTail.y);
 
-    // Torso.
-    g.fillStyle(BODY, 1);
-    g.fillPoints(
-      [
-        { x: hip.x - 4, y: hip.y },
-        { x: hip.x + 5, y: hip.y + 2 },
-        { x: shoulder.x + 5, y: shoulder.y + 2 },
-        { x: shoulder.x - 5, y: shoulder.y - 2 },
-      ],
-      true,
-    );
-
-    // Pierna cercana.
     const kneeNear = solveKnee(hip, pedalNear, THIGH, SHIN);
-    g.lineStyle(5, BODY, 1);
-    g.lineBetween(hip.x, hip.y, kneeNear.x, kneeNear.y);
-    g.lineBetween(kneeNear.x, kneeNear.y, pedalNear.x, pedalNear.y);
-
-    // Brazo al manillar: cuanto más recogido, más doblado el codo.
     const elbow: Point = {
       x: (shoulder.x + BAR.x) / 2 + 1,
       y: (shoulder.y + BAR.y) / 2 + 4 + tuck * 5,
     };
+    const headX = shoulder.x + 7 + tuck * 2;
+    const headY = shoulder.y - 8 + lift * 0.3 + tuck * 3;
+    const torso: Point[] = [
+      { x: hip.x - 4, y: hip.y },
+      { x: hip.x + 5, y: hip.y + 2 },
+      { x: shoulder.x + 5, y: shoulder.y + 2 },
+      { x: shoulder.x - 5, y: shoulder.y - 2 },
+    ];
+
+    // Borde de luz de luna: la silueta entera, un poco más ancha y clara,
+    // debajo de la figura. Es lo que la separa del fondo cuando la noche cierra.
+    g.lineStyle(5 + RIM_LIGHT_EXTRA_W, RIM_LIGHT, RIM_LIGHT_ALPHA);
+    g.lineBetween(hip.x, hip.y, kneeNear.x, kneeNear.y);
+    g.lineBetween(kneeNear.x, kneeNear.y, pedalNear.x, pedalNear.y);
+    g.lineStyle(3.5 + RIM_LIGHT_EXTRA_W, RIM_LIGHT, RIM_LIGHT_ALPHA);
+    g.lineBetween(shoulder.x, shoulder.y, elbow.x, elbow.y);
+    g.lineBetween(elbow.x, elbow.y, BAR.x, BAR.y);
+    g.lineStyle(RIM_LIGHT_EXTRA_W, RIM_LIGHT, RIM_LIGHT_ALPHA);
+    g.strokePoints(torso, true, true);
+    g.strokeCircle(headX, headY - 0.5, 7.4);
+    g.strokeTriangle(shoulder.x - 4, shoulder.y + 2, hip.x - 3, hip.y - 2, jacketTail.x, jacketTail.y);
+
+    // Torso.
+    g.fillStyle(BODY, 1);
+    g.fillPoints(torso, true);
+    // Banda reflectante en la espalda, como la de cualquier chaleco.
+    g.lineStyle(1.6, REFLECTIVE, 0.75);
+    g.lineBetween(hip.x - 2, hip.y - 12, shoulder.x - 3, shoulder.y + 6);
+
+    // Pierna cercana, con banda reflectante en el tobillo.
+    g.lineStyle(5, BODY, 1);
+    g.lineBetween(hip.x, hip.y, kneeNear.x, kneeNear.y);
+    g.lineBetween(kneeNear.x, kneeNear.y, pedalNear.x, pedalNear.y);
+    g.fillStyle(REFLECTIVE, 0.95);
+    g.fillCircle(pedalNear.x, pedalNear.y - 3, 1.9);
+
+    // Brazo al manillar: cuanto más recogido, más doblado el codo.
     g.lineStyle(3.5, BODY, 1);
     g.lineBetween(shoulder.x, shoulder.y, elbow.x, elbow.y);
     g.lineBetween(elbow.x, elbow.y, BAR.x, BAR.y);
 
     // Cabeza con casco: recogido, la cabeza baja y mira al asfalto.
-    const headX = shoulder.x + 7 + tuck * 2;
-    const headY = shoulder.y - 8 + lift * 0.3 + tuck * 3;
     g.fillStyle(BODY, 1);
     g.fillCircle(headX, headY, 6);
-    g.fillStyle(BIKE, 1);
+    g.fillStyle(JACKET, 1);
     g.beginPath();
     g.arc(headX, headY - 1.5, 7, Math.PI, 0, false);
     g.fillPath();
-    g.lineStyle(1.4, ACCENT, 0.9);
+    g.lineStyle(1.6, ACCENT, 1);
     g.beginPath();
     g.arc(headX, headY - 1.5, 5.2, Math.PI * 1.15, Math.PI * 1.85, false);
     g.strokePath();
