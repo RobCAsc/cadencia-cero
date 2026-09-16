@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { RENDER } from '../../config';
 import { expandProgram, totalDurationSec } from '../../sim/program';
+// RENDER sigue usándose para colocar las filas respecto al centro de la pantalla.
 import {
   blocksToProgram,
   DEFAULT_BLOCKS,
@@ -13,8 +14,9 @@ import {
 } from '../../sim/programRules';
 import { formatMMSS } from '../format';
 import { KIND_ES } from '../hud/KindNames';
-import { FONT_MONO, FONT_SANS, KIND_COLOR, UI } from '../theme';
+import { FONT_MONO, FONT_SANS, KIND_COLOR } from '../theme';
 import { makeTapButton, makeTextButton, type TapButton } from '../uiButton';
+import { INK, INK_DIM, INK_GREEN, INK_MUTED, INK_RED, paperPanel } from '../ui/paper';
 
 // Diseña tu salida: bloques (calor, ritmo, oleada, recuperación, calma) con
 // minutos y zona, dentro de las reglas del pulso. Antes de guardar, el rider
@@ -26,7 +28,6 @@ const PANEL_W = 1040;
 const PANEL_H = 660;
 const ROW0_Y = 118;
 const ROW_H = 52;
-const GOLD = '#d9b06a';
 
 export interface BuilderPanelOptions {
   initial?: readonly Block[];
@@ -49,26 +50,16 @@ export class BuilderPanel {
     private readonly opts: BuilderPanelOptions,
   ) {
     this.blocks = (opts.initial ?? DEFAULT_BLOCKS).map((b) => ({ ...b }));
-    const cx = RENDER.width / 2;
-    const cy = RENDER.height / 2;
-    const top = cy - PANEL_H / 2;
-    const dim = scene.add.rectangle(cx, cy, RENDER.width, RENDER.height, 0x05060e, 0.86).setDepth(DEPTH).setInteractive();
-    const panel = scene.add.rectangle(cx, cy, PANEL_W, PANEL_H, UI.panel).setDepth(DEPTH).setStrokeStyle(2, 0x3a4256);
-    const title = scene.add
-      .text(cx, top + 34, 'Diseña tu salida', { fontFamily: FONT_SANS, fontSize: '30px', fontStyle: 'bold', color: UI.textBright })
-      .setOrigin(0.5)
-      .setDepth(DEPTH + 1);
-    const subtitle = scene.add
-      .text(cx, top + 66, 'Toca el tipo para cambiarlo. Calor de tres minutos, esfuerzos de un minuto o más, calma al final: el rider modelo la prueba antes de guardar.', {
-        fontFamily: FONT_SANS,
-        fontSize: '14px',
-        color: UI.textMuted,
-        align: 'center',
-        wordWrap: { width: PANEL_W - 80 },
-      })
-      .setOrigin(0.5)
-      .setDepth(DEPTH + 1);
-    this.objects.push(dim, panel, title, subtitle);
+    const sheet = paperPanel(
+      scene,
+      PANEL_W,
+      PANEL_H,
+      DEPTH,
+      'Diseña tu salida',
+      'Toca el tipo para cambiarlo. Calor de tres minutos, esfuerzos de un minuto o más, calma al final: el rider modelo la prueba antes de guardar.',
+    );
+    const { cx, top } = sheet;
+    this.objects.push(...sheet.objects);
 
     const footY = top + PANEL_H - 44;
     this.addButton = makeTextButton(scene, cx - 400, footY, 150, 46, '+ bloque', () => this.addBlock(), DEPTH + 1, 18);
@@ -76,11 +67,11 @@ export class BuilderPanel {
     this.saveButton = makeTextButton(scene, cx - 20, footY, 170, 46, 'Guardar', () => this.save(), DEPTH + 1, 18);
     const close = makeTextButton(scene, cx + 380, footY, 150, 46, 'Cerrar', () => this.close(), DEPTH + 1, 18);
     this.totalText = scene.add
-      .text(cx + 200, footY, '', { fontFamily: FONT_MONO, fontSize: '22px', color: UI.textBright })
+      .text(cx + 200, footY, '', { fontFamily: FONT_MONO, fontSize: '22px', fontStyle: 'bold', color: INK })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
     this.verdictText = scene.add
-      .text(cx, footY - 56, '', { fontFamily: FONT_SANS, fontSize: '15px', color: UI.info, align: 'center', wordWrap: { width: PANEL_W - 80 } })
+      .text(cx, footY - 56, '', { fontFamily: FONT_SANS, fontSize: '15px', color: INK_MUTED, align: 'center', wordWrap: { width: PANEL_W - 80 } })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
     this.objects.push(this.addButton.rect, this.addButton.label, testButton.rect, testButton.label, this.saveButton.rect, this.saveButton.label, close.rect, close.label, this.totalText, this.verdictText);
@@ -104,17 +95,17 @@ export class BuilderPanel {
       g.fillStyle(KIND_COLOR[block.kind] ?? 0xffffff, 0.9);
       g.fillRect(left, y - 14, 6, 28);
       const index = this.scene.add
-        .text(left + 18, y, `${i + 1}`, { fontFamily: FONT_MONO, fontSize: '18px', color: UI.textDim })
+        .text(left + 18, y, `${i + 1}`, { fontFamily: FONT_MONO, fontSize: '18px', color: INK_DIM })
         .setOrigin(0, 0.5)
         .setDepth(DEPTH + 1);
       const kind = makeTextButton(this.scene, left + 150, y, 190, 40, KIND_ES[block.kind] ?? block.kind, () => this.cycleKind(i), DEPTH + 1, 17);
       const minutesLabel = this.scene.add
-        .text(left + 300, y, 'min', { fontFamily: FONT_SANS, fontSize: '15px', color: UI.textDim })
+        .text(left + 300, y, 'min', { fontFamily: FONT_SANS, fontSize: '15px', color: INK_DIM })
         .setOrigin(0, 0.5)
         .setDepth(DEPTH + 1);
       const minutesMinus = makeTapButton(this.scene, left + 360, y, 40, '−', () => this.bump(i, 'minutes', -1), DEPTH + 1);
       const minutes = this.scene.add
-        .text(left + 420, y, `${block.minutes}`, { fontFamily: FONT_MONO, fontSize: '24px', color: UI.textBright })
+        .text(left + 420, y, `${block.minutes}`, { fontFamily: FONT_MONO, fontSize: '24px', fontStyle: 'bold', color: INK })
         .setOrigin(0.5)
         .setDepth(DEPTH + 1);
       const minutesPlus = makeTapButton(this.scene, left + 480, y, 40, '+', () => this.bump(i, 'minutes', 1), DEPTH + 1);
@@ -122,13 +113,13 @@ export class BuilderPanel {
         .text(left + 540, y, block.kind === 'warmup' || block.kind === 'cooldown' ? 'hasta zona' : block.kind === 'recover' ? 'zona ≤' : 'zona', {
           fontFamily: FONT_SANS,
           fontSize: '15px',
-          color: UI.textDim,
+          color: INK_DIM,
         })
         .setOrigin(0, 0.5)
         .setDepth(DEPTH + 1);
       const zoneMinus = makeTapButton(this.scene, left + 660, y, 40, '−', () => this.bump(i, 'zone', -1), DEPTH + 1);
       const zone = this.scene.add
-        .text(left + 720, y, block.zone === 0 ? 'suave' : `Z${block.zone}`, { fontFamily: FONT_MONO, fontSize: '24px', color: UI.textBright })
+        .text(left + 720, y, block.zone === 0 ? 'suave' : `Z${block.zone}`, { fontFamily: FONT_MONO, fontSize: '24px', fontStyle: 'bold', color: INK })
         .setOrigin(0.5)
         .setDepth(DEPTH + 1);
       const zonePlus = makeTapButton(this.scene, left + 780, y, 40, '+', () => this.bump(i, 'zone', 1), DEPTH + 1);
@@ -144,7 +135,7 @@ export class BuilderPanel {
     if (!this.checked) {
       const problems = this.blocks.length > 0 ? validateProgram(program) : ['La salida está vacía.'];
       this.verdictText.setText(problems.length > 0 ? problems.join('  ·  ') : 'Cumple las reglas. Pruébala con el rider modelo para poder guardarla.');
-      this.verdictText.setColor(problems.length > 0 ? UI.warn : UI.textMuted);
+      this.verdictText.setColor(problems.length > 0 ? INK_RED : INK_MUTED);
       this.saveButton.rect.setAlpha(0.4);
     }
   }
@@ -191,13 +182,13 @@ export class BuilderPanel {
     const problems = this.blocks.length > 0 ? validateProgram(program) : ['La salida está vacía.'];
     if (problems.length > 0) {
       this.verdictText.setText(problems.join('  ·  '));
-      this.verdictText.setColor(UI.warn);
+      this.verdictText.setColor(INK_RED);
       return;
     }
     const verdict = sustainability(program);
     this.checked = verdict.ok;
     this.verdictText.setText(verdict.message);
-    this.verdictText.setColor(verdict.ok ? UI.good : UI.warn);
+    this.verdictText.setColor(verdict.ok ? INK_GREEN : INK_RED);
     this.saveButton.rect.setAlpha(verdict.ok ? 1 : 0.4);
   }
 
@@ -223,5 +214,3 @@ export class BuilderPanel {
     this.objects.length = 0;
   }
 }
-
-export { GOLD as BUILDER_GOLD };

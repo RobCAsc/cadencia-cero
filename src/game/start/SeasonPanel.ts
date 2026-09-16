@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
-import { RENDER } from '../../config';
 import { SEASON_WEEKS, type SeasonReport } from '../../sim/progress';
-import { FONT_MONO, FONT_SANS, UI } from '../theme';
+import { FONT_MONO, FONT_SANS } from '../theme';
 import { makeTextButton } from '../uiButton';
+import { INK, INK_DIM, INK_GREEN, INK_MUTED, paperPanel, stamp } from '../ui/paper';
 
 // El informe de temporada: doce semanas cerradas, en los números que el pulso
 // puede dar. Es el "fin de partida" que se repite: sin niveles, un ciclo.
@@ -10,18 +10,15 @@ import { makeTextButton } from '../uiButton';
 const DEPTH = 55;
 const PANEL_W = 840;
 const PANEL_H = 540;
-const GOLD = '#d9b06a';
 
 export class SeasonPanel {
   private readonly objects: Phaser.GameObjects.GameObject[] = [];
 
   constructor(scene: Phaser.Scene, report: SeasonReport, onClose: () => void) {
-    const cx = RENDER.width / 2;
-    const cy = RENDER.height / 2;
-    const top = cy - PANEL_H / 2;
-    const dim = scene.add.rectangle(cx, cy, RENDER.width, RENDER.height, 0x05060e, 0.8).setDepth(DEPTH).setInteractive();
-    const panel = scene.add.rectangle(cx, cy, PANEL_W, PANEL_H, UI.panel).setDepth(DEPTH).setStrokeStyle(2, 0xd9b06a);
-    this.objects.push(dim, panel);
+    const sheet = paperPanel(scene, PANEL_W, PANEL_H, DEPTH, `Temporada ${report.number}, cerrada`, `${SEASON_WEEKS} semanas. Lo que cambió, en lo que el pulso puede medir.`);
+    const { cx, top } = sheet;
+    this.objects.push(...sheet.objects);
+    this.objects.push(stamp(scene, sheet.left + PANEL_W - 130, top + 44, 'cerrada', undefined, DEPTH + 2, 14));
     const text = (x: number, y: number, value: string, size: number, color: string, extra: Partial<Phaser.Types.GameObjects.Text.TextStyle> = {}) => {
       const t = scene.add
         .text(x, y, value, { fontFamily: size >= 24 ? FONT_MONO : FONT_SANS, fontSize: `${size}px`, color, ...extra })
@@ -30,10 +27,7 @@ export class SeasonPanel {
       return t;
     };
 
-    text(cx, top + 40, `Temporada ${report.number}, cerrada`, 34, GOLD, { fontStyle: 'bold' }).setOrigin(0.5);
-    text(cx, top + 78, `${SEASON_WEEKS} semanas. Lo que cambió, en lo que el pulso puede medir.`, 16, UI.textMuted).setOrigin(0.5);
-
-    const left = cx - PANEL_W / 2 + 50;
+    const left = sheet.left + 50;
     const col = cx + 20;
     const delta = (start: number | undefined, end: number | undefined, unit: string, lowerIsBetter: boolean): [string, string] => {
       if (start === undefined || end === undefined) return ['––', 'sin lecturas suficientes'];
@@ -52,11 +46,11 @@ export class SeasonPanel {
     ];
     rows.forEach(([label, value, note], i) => {
       const y = top + 124 + i * 54;
-      text(left, y, label, 18, UI.textMuted);
-      text(col, y - 6, value, 28, UI.textBright);
-      text(col + 170, y + 2, note, 14, UI.textDim);
+      text(left, y, label, 18, INK_MUTED);
+      text(col, y - 6, value, 28, INK, { fontStyle: 'bold' });
+      text(col + 170, y + 2, note, 14, INK_DIM);
     });
-    text(cx, top + PANEL_H - 108, 'Temporada nueva: la escalera de nuevo, y el volumen sigue desde donde lo dejaste.', 16, UI.info, { wordWrap: { width: PANEL_W - 80 }, align: 'center' }).setOrigin(0.5);
+    text(cx, top + PANEL_H - 108, 'Temporada nueva: la escalera de nuevo, y el volumen sigue desde donde lo dejaste.', 16, INK_GREEN, { wordWrap: { width: PANEL_W - 80 }, align: 'center' }).setOrigin(0.5);
     const close = makeTextButton(scene, cx, top + PANEL_H - 50, 260, 54, 'A por la siguiente', () => this.close(onClose), DEPTH + 1, 22);
     this.objects.push(close.rect, close.label);
   }

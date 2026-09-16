@@ -6,11 +6,22 @@ import { talkTestCue, zoneLabel, zoneOf } from '../../sim/zones';
 import { formatMMSS } from '../format';
 import { FONT_MONO, FONT_SANS, KIND_COLOR, UI, ZONE_COLOR } from '../theme';
 import { makeTextButton, type TapButton } from '../uiButton';
+import { icon, type IconName } from '../ui/paper';
 import { KIND_ES } from './KindNames';
 
 export { KIND_ES };
 
-const HEALTH_W = 256;
+/** El icono de cada tipo de tramo: lo que viene, sin leerlo. */
+const KIND_ICON: Record<string, IconName> = {
+  warmup: 'flame',
+  steady: 'road',
+  surge: 'zombie',
+  recover: 'moon',
+  cooldown: 'moon',
+  push: 'bolt',
+};
+const HEARTS = 5;
+
 const ZONE_X = 24;
 const ZONE_Y = 130;
 const ZONE_W = 300;
@@ -47,8 +58,12 @@ export class Hud {
   private readonly cadenceText: Phaser.GameObjects.Text;
   private readonly statsText: Phaser.GameObjects.Text;
   private readonly rightText: Phaser.GameObjects.Text;
-  private readonly healthFill: Phaser.GameObjects.Rectangle;
-  private readonly healthBg: Phaser.GameObjects.Rectangle;
+  private readonly segmentTime: Phaser.GameObjects.Text;
+  private readonly segmentGlyph: Phaser.GameObjects.Graphics;
+  private readonly heartGlyph: Phaser.GameObjects.Graphics;
+  private readonly gapGlyph: Phaser.GameObjects.Graphics;
+  private readonly hearts: Phaser.GameObjects.Graphics;
+  private lastHealthPct = -1;
   private readonly zoneBar: Phaser.GameObjects.Graphics;
   private readonly zoneCaption: Phaser.GameObjects.Text;
   private readonly timeline: Phaser.GameObjects.Graphics;
@@ -87,12 +102,15 @@ export class Hud {
       .setOrigin(0.5, 0)
       .setDepth(10);
 
+    // Tu pulso: un corazón dibujado que late, y el número.
+    this.heartGlyph = scene.add.graphics().setDepth(10);
     this.cadenceText = scene.add
-      .text(24, 16, '', { fontFamily: FONT_MONO, fontSize: '40px', color: UI.textBright })
+      .text(66, 16, '', { fontFamily: FONT_MONO, fontSize: '40px', color: UI.textBright })
       .setDepth(10);
     this.statsText = scene.add
-      .text(24, 68, '', { fontFamily: FONT_MONO, fontSize: '24px', color: UI.textMuted, lineSpacing: 6 })
+      .text(24, 68, '', { fontFamily: FONT_MONO, fontSize: '22px', color: UI.textMuted, lineSpacing: 6 })
       .setDepth(10);
+    this.gapGlyph = scene.add.graphics().setDepth(10);
 
     // Barra de zonas: Z1..Z5, la tuya encendida, la del tramo enmarcada.
     this.zoneBar = scene.add.graphics().setDepth(10);
@@ -105,13 +123,19 @@ export class Hud {
     this.drawTimeline();
     this.playhead = scene.add.graphics().setDepth(11);
 
+    // El tramo: su icono y lo que le queda, grande; debajo, lo que sigue y el total.
+    this.segmentGlyph = scene.add.graphics().setDepth(10);
+    this.segmentTime = scene.add
+      .text(RENDER.width - 24, 12, '', { fontFamily: FONT_MONO, fontSize: '44px', fontStyle: 'bold', color: UI.textBright })
+      .setOrigin(1, 0)
+      .setDepth(10);
     this.rightText = scene.add
-      .text(RENDER.width - 24, 16, '', {
+      .text(RENDER.width - 24, 64, '', {
         fontFamily: FONT_MONO,
-        fontSize: '24px',
+        fontSize: '18px',
         color: UI.textMuted,
         align: 'right',
-        lineSpacing: 6,
+        lineSpacing: 4,
       })
       .setOrigin(1, 0)
       .setDepth(10);
@@ -119,17 +143,8 @@ export class Hud {
     this.quitButton = makeTextButton(scene, RENDER.width - 24 - 90, 138, 180, 44, 'Terminar', () => this.onQuitTap(opts.onQuit), 10, 18);
     this.quitButton.rect.setAlpha(0.7);
 
-    scene.add
-      .text(24, RENDER.height - 86, 'Salud', { fontFamily: FONT_SANS, fontSize: '18px', color: UI.textMuted })
-      .setDepth(10);
-    this.healthBg = scene.add
-      .rectangle(24, RENDER.height - 60, HEALTH_W + 4, 22, 0x2c3242)
-      .setOrigin(0, 0)
-      .setDepth(10);
-    this.healthFill = scene.add
-      .rectangle(26, RENDER.height - 58, HEALTH_W, 18, 0x2ecc71)
-      .setOrigin(0, 0)
-      .setDepth(10);
+    // La salud: cinco corazones; cada captura apaga uno.
+    this.hearts = scene.add.graphics().setDepth(10);
   }
 
   /** Los tramos cambian con el enfriamiento, el empujón o el resto en suave: la línea de tiempo se rehace. */
@@ -152,20 +167,27 @@ export class Hud {
         ? 1 + 0.06 * Math.abs(Math.sin((this.scene.time.now / 1000) * Math.PI * 1.6))
         : 1;
     this.gapText.setScale(pulse);
-    // Lo que le pasa a la ventaja, dicho: enfriando, pulso pasado del máximo,
-    // por encima del techo de zona, o nada.
+    // Lo que le pasa a la ventaja, con su icono: enfriando, pulso pasado del
+    // máximo, por encima del techo de zona, o la horda a tantos metros.
+    const gg = this.gapGlyph;
+    gg.clear();
+    const cx = RENDER.width / 2;
     if (state.coolingDown) {
-      this.gapLabel.setText('enfriando · la horda se queda');
+      this.gapLabel.setText('enfriando');
       this.gapLabel.setColor(UI.info);
+      icon(gg, 'snowflake', cx - this.gapLabel.width / 2 - 18, 124, 18, 0x7ec8ff);
     } else if (state.easeOff) {
-      this.gapLabel.setText('AFLOJA · pulso sobre tu máximo');
+      this.gapLabel.setText('AFLOJA');
       this.gapLabel.setColor(UI.danger);
+      icon(gg, 'warning', cx - this.gapLabel.width / 2 - 20, 124, 20, 0xe74c3c);
     } else if (state.aboveZone) {
-      this.gapLabel.setText('ventaja congelada');
+      this.gapLabel.setText('congelada');
       this.gapLabel.setColor(UI.warn);
+      icon(gg, 'snowflake', cx - this.gapLabel.width / 2 - 18, 124, 16, 0xf39c12);
     } else {
       this.gapLabel.setText('de ventaja');
       this.gapLabel.setColor(UI.textMuted);
+      icon(gg, 'zombie', cx - this.gapLabel.width / 2 - 20, 124, 22, 0xe74c3c, 0.85);
     }
     this.hordeSpeedText.setText(
       state.coolingDown || state.easeOff
@@ -184,23 +206,30 @@ export class Hud {
 
     const feel = state.inputMode === 'feel';
     const heartRate = state.inputMode === 'heartRate' || (!feel && state.heartRateBpm > 0);
+    const hg = this.heartGlyph;
+    hg.clear();
     if (feel) {
       this.cadenceText.setText('por sensación');
       this.cadenceText.setColor(UI.textMuted);
+      this.cadenceText.setX(24);
       this.statsText.setText(
         `${state.playerSpeedKph.toFixed(1)} km/h\n${(state.distanceM / 1000).toFixed(2)} km`,
       );
     } else if (state.inputMode === 'heartRate') {
-      // El pulso es la entrada: va donde iba la cadencia, con el esfuerzo al lado.
+      // El pulso es la entrada: un corazón que late a tu ritmo, y el número.
       const bpm = state.heartRateBpm > 0 ? `${Math.round(state.heartRateBpm)}` : '––';
-      this.cadenceText.setText(`♥ ${bpm}`);
-      this.cadenceText.setColor(state.heartRateStale ? UI.textDim : UI.danger);
+      const beat = state.heartRateBpm > 0 ? 1 + 0.12 * Math.max(0, Math.sin((this.scene.time.now / 1000) * Math.PI * 2 * (state.heartRateBpm / 60))) : 1;
+      icon(hg, 'heart', 40, 38, 30 * beat, state.heartRateStale ? 0x5d6470 : 0xe74c3c);
+      this.cadenceText.setText(bpm);
+      this.cadenceText.setColor(state.heartRateStale ? UI.textDim : UI.textBright);
+      this.cadenceText.setX(66);
       this.statsText.setText(
         `${state.playerSpeedKph.toFixed(1)} km/h · ${Math.round(state.effortFrac * 100)} %\n${(state.distanceM / 1000).toFixed(2)} km`,
       );
     } else {
       this.cadenceText.setText(`${Math.round(state.cadenceRpm)} rpm`);
       this.cadenceText.setColor(state.cadenceStale ? UI.textDim : UI.textBright);
+      this.cadenceText.setX(24);
       this.statsText.setText(
         `${state.playerSpeedKph.toFixed(1)} km/h\n${(state.distanceM / 1000).toFixed(2)} km`,
       );
@@ -216,11 +245,15 @@ export class Hud {
           ? `Cuesta ▲ ${seg.grade} %`
           : (KIND_ES[seg.kind] ?? seg.kind);
     const nextLine = seg.next
-      ? `Sigue: ${KIND_ES[seg.next.kind] ?? seg.next.kind} · ${zoneLabel(seg.next.zoneMin, seg.next.zoneMax)}`
-      : 'Último tramo';
-    this.rightText.setText(
-      `${formatMMSS(state.elapsedSec)} / ${formatMMSS(state.totalSec)}\n${segName} · ${formatMMSS(seg.remainingSec)}\n${nextLine}`,
-    );
+      ? `→ ${KIND_ES[seg.next.kind] ?? seg.next.kind} ${zoneLabel(seg.next.zoneMin, seg.next.zoneMax)}`
+      : 'último tramo';
+    // Lo que queda del tramo, grande, con su icono; el resto en pequeño.
+    this.segmentTime.setText(formatMMSS(seg.remainingSec));
+    const sg = this.segmentGlyph;
+    sg.clear();
+    const kindColor = KIND_COLOR[seg.kind] ?? 0xffffff;
+    icon(sg, seg.grade !== undefined && seg.grade > 0 ? 'mountain' : (KIND_ICON[seg.kind] ?? 'road'), RENDER.width - 24 - this.segmentTime.width - 28, 36, 30, kindColor);
+    this.rightText.setText(`${segName} · ${zoneLabel(seg.zoneMin, seg.zoneMax)}\n${nextLine}\n${formatMMSS(state.elapsedSec)} / ${formatMMSS(state.totalSec)}`);
 
     if (state.coolingDown && !this.cooling) {
       this.cooling = true;
@@ -231,14 +264,28 @@ export class Hud {
     }
     if (!this.cooling && this.quitArmedUntil > 0 && this.scene.time.now > this.quitArmedUntil) this.disarmQuit();
 
-    const frac = Math.max(0, Math.min(1, state.healthPct / SIM.maxHealth));
-    this.healthFill.setScale(frac, 1);
-    this.healthFill.setFillStyle(frac > 0.6 ? 0x2ecc71 : frac > 0.3 ? 0xf39c12 : 0xe74c3c);
+    if (state.healthPct !== this.lastHealthPct) {
+      this.lastHealthPct = state.healthPct;
+      this.drawHearts(state.healthPct);
+    }
+  }
+
+  /** Cinco corazones: los que quedan encendidos, los perdidos apagados. */
+  private drawHearts(healthPct: number): void {
+    const g = this.hearts;
+    g.clear();
+    const alive = Math.round((healthPct / SIM.maxHealth) * HEARTS);
+    for (let i = 0; i < HEARTS; i++) {
+      const x = 40 + i * 38;
+      const y = RENDER.height - 58;
+      if (i < alive) icon(g, 'heart', x, y, 30, alive <= 2 ? 0xe74c3c : 0x2ecc71);
+      else icon(g, 'heart', x, y, 30, 0x2c3242, 0.9);
+    }
   }
 
   pulseHealth(): void {
     this.scene.tweens.add({
-      targets: [this.healthFill, this.healthBg],
+      targets: [this.hearts],
       alpha: { from: 1, to: 0.25 },
       duration: 110,
       yoyo: true,

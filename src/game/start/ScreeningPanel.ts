@@ -4,6 +4,7 @@ import type { ScreeningFlag } from '../../storage/planStore';
 import { promptText } from '../textPrompt';
 import { FONT_SANS, UI } from '../theme';
 import { makeTextButton, type TapButton } from '../uiButton';
+import { INK, INK_DIM, INK_GOLD, INK_GREEN, INK_RED, paperPanel } from '../ui/paper';
 
 // El cribado de una vez, antes de la primera salida: cuatro preguntas que
 // son las que cualquier profesional haría antes de mandar a alguien a
@@ -44,32 +45,22 @@ export class ScreeningPanel {
     private readonly scene: Phaser.Scene,
     private readonly opts: ScreeningPanelOptions,
   ) {
-    const cx = RENDER.width / 2;
-    const cy = RENDER.height / 2;
-    const top = cy - PANEL_H / 2;
-    const dim = scene.add.rectangle(cx, cy, RENDER.width, RENDER.height, 0x05060e, 0.86).setDepth(DEPTH).setInteractive();
-    const panel = scene.add.rectangle(cx, cy, PANEL_W, PANEL_H, UI.panel).setDepth(DEPTH).setStrokeStyle(2, 0x3a4256);
-    const title = scene.add
-      .text(cx, top + 40, 'Antes de entrenar', { fontFamily: FONT_SANS, fontSize: '32px', fontStyle: 'bold', color: UI.textBright })
-      .setOrigin(0.5)
-      .setDepth(DEPTH + 1);
-    const subtitle = scene.add
-      .text(cx, top + 76, 'Cuatro preguntas, una vez. Con un "sí" el juego no te prohíbe nada: te pide consultar y te ofrece pedalear sin que el pulso mande.', {
-        fontFamily: FONT_SANS,
-        fontSize: '16px',
-        color: UI.textMuted,
-        align: 'center',
-        wordWrap: { width: PANEL_W - 80 },
-      })
-      .setOrigin(0.5)
-      .setDepth(DEPTH + 1);
-    this.objects.push(dim, panel, title, subtitle);
+    const sheet = paperPanel(
+      scene,
+      PANEL_W,
+      PANEL_H,
+      DEPTH,
+      'Antes de entrenar',
+      'Cuatro preguntas, una vez. Con un "sí" el juego no te prohíbe nada: te pide consultar y te ofrece pedalear sin que el pulso mande.',
+    );
+    const { cx, top } = sheet;
+    this.objects.push(...sheet.objects);
 
-    const left = cx - PANEL_W / 2 + 40;
+    const left = sheet.left + 40;
     QUESTIONS.forEach(([flag, text], i) => {
       const y = top + 140 + i * 64;
       const q = scene.add
-        .text(left, y, text, { fontFamily: FONT_SANS, fontSize: '19px', color: UI.textBright, wordWrap: { width: PANEL_W - 320 } })
+        .text(left, y, text, { fontFamily: FONT_SANS, fontSize: '19px', color: INK, wordWrap: { width: PANEL_W - 320 } })
         .setOrigin(0, 0.5)
         .setDepth(DEPTH + 1);
       const yes = makeTextButton(scene, cx + PANEL_W / 2 - 200, y, 90, 42, 'Sí', () => this.set(flag, true), DEPTH + 1, 18);
@@ -79,7 +70,7 @@ export class ScreeningPanel {
     });
 
     this.verdict = scene.add
-      .text(cx, top + 420, '', { fontFamily: FONT_SANS, fontSize: '17px', color: UI.warn, align: 'center', wordWrap: { width: PANEL_W - 80 } })
+      .text(cx, top + 420, '', { fontFamily: FONT_SANS, fontSize: '17px', color: INK_RED, align: 'center', wordWrap: { width: PANEL_W - 80 } })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
 
@@ -87,11 +78,11 @@ export class ScreeningPanel {
     // vuelve a aparecer en el ritual y en la revisión semanal.
     this.why = opts.why;
     const whyLabel = scene.add
-      .text(left, top + 476, '¿Por qué pedaleas?', { fontFamily: FONT_SANS, fontSize: '19px', color: UI.textBright })
+      .text(left, top + 476, '¿Por qué pedaleas?', { fontFamily: FONT_SANS, fontSize: '19px', color: INK })
       .setOrigin(0, 0.5)
       .setDepth(DEPTH + 1);
     this.whyText = scene.add
-      .text(left + 200, top + 476, '', { fontFamily: FONT_SANS, fontSize: '16px', color: '#d9b06a', wordWrap: { width: PANEL_W - 520 } })
+      .text(left + 200, top + 476, '', { fontFamily: FONT_SANS, fontSize: '16px', color: INK_GOLD, wordWrap: { width: PANEL_W - 520 } })
       .setOrigin(0, 0.5)
       .setDepth(DEPTH + 1);
     const whyButton = makeTextButton(scene, cx + PANEL_W / 2 - 148, top + 476, 190, 42, 'Escribirlo', () => void this.askWhy(), DEPTH + 1, 17);
@@ -100,7 +91,7 @@ export class ScreeningPanel {
       .text(cx, top + PANEL_H - 118, 'Esto no es un dispositivo médico. El pulso de muñeca orienta, no diagnostica: si notas dolor en el pecho, mareo o falta de aire desproporcionada, para y consulta.', {
         fontFamily: FONT_SANS,
         fontSize: '14px',
-        color: UI.textDim,
+        color: INK_DIM,
         align: 'center',
         wordWrap: { width: PANEL_W - 80 },
       })
@@ -152,9 +143,9 @@ export class ScreeningPanel {
           ? 'Consulta con un profesional antes de entrenar fuerte. Mientras tanto, el modo por sensación: tramos por tiempo y la prueba del habla como guía, sin horda que te persiga por pulso. Con medicación que afecte al pulso, las zonas no valen: usa ese modo.'
           : 'Sin avisos. Adelante: empieza suave, y si un día algo no va, para.',
     );
-    this.verdict.setColor(flagged ? UI.warn : UI.good);
+    this.verdict.setColor(flagged ? INK_RED : INK_GREEN);
     this.whyText.setText(this.why ? `«${this.why}»` : 'Una línea, en tus palabras. Opcional, pero ayuda los días flojos.');
-    this.whyText.setColor(this.why ? '#d9b06a' : UI.textDim);
+    this.whyText.setColor(this.why ? INK_GOLD : INK_DIM);
     for (const b of [this.feelButton, this.continueButton]) {
       b.rect.setAlpha(complete ? 1 : 0.35);
       if (complete) b.rect.setInteractive({ useHandCursor: true });

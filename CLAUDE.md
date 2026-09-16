@@ -142,6 +142,14 @@ Deliberately excluded (decided 2026-09-13): cosmetic unlockables, XP, levels. Th
 
 **Phase 3 — optional.** ESP32 reading the bike's own reed switch and re-broadcasting as standard CSC, removing the dependency on the purchased sensor. Firmware, not app work.
 
+## Look
+
+The interface was reworked on 2026-09-16 because it read as text in tables, not as a game. The language (`src/game/ui/paper.ts`, all drawn by code) is what a group of survivors would have on a wall: a wooden **board** with **paper** notes pinned on it, ink, rubber **stamps**, chalk **tally** marks, and a set of line **icons** (heart, bike, zombie, skull, flame, road, trophy, clock, sun, moon, band, mountain, bolt, clipboard, pencil, house, compass, snowflake, warning). Every modal is a `paperPanel` (dimmed night behind, one sheet, ink text); ink colors live in that module (`INK`, `INK_MUTED`, `INK_RED`, `INK_GREEN`, `INK_GOLD`), and the dark HUD keeps the `UI` palette. Rules of thumb: a number with an icon beats a sentence; a state gets an icon and one word; anything that repeats (days, hearts, weeks) is drawn, not listed.
+
+- **Camp** (`StartScene`, `src/game/start/Board.ts`): the week as seven calendar cells with checks and the streak as tally marks; the Route as a hand-drawn map with the rider and the horde on the road; health as three gauges with needles; the ride of the day as a poster with a stamp, the profile bars and a row of zombies sized by intensity; the other programs as paper tabs with an icon each; icon buttons up top.
+- **HUD** (`src/game/hud/Hud.ts`): a beating heart with the pulse, a zombie by the advantage, the segment's icon with the time left large, five hearts for health, icons for "enfriando", "AFLOJA" and "congelada".
+- **Summary** (`src/game/ride/FinishPanel.ts`): four tiles with icons, zone bars, three faces for "¿cómo fue?", paper chips for the diary word, calendar tiles for the next ride, the sun or a skull by the title.
+
 ## Sound
 
 Everything is synthesized in WebAudio (wind, crickets, birds, the proximity drone and heartbeat, thunder, the catch hit) except eight short clips in `assets/sfx` that the rider supplied on 2026-09-14. They are the only binary assets in the game; art stays by code. `src/game/sfx.ts` fetches them at load, decodes them once the AudioContext exists, plays them (or a window of them) with envelopes, and chains a clip with itself through a crossfade (`CrossfadeLoop`) when something has to sound continuous. If a clip fails to load, the synthesized version takes its place where one exists, or it stays silent.

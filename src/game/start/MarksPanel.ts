@@ -1,17 +1,31 @@
 import Phaser from 'phaser';
-import { RENDER } from '../../config';
 import type { SessionRecord } from '../../sim/history';
-import { marks } from '../../sim/marks';
-import { FONT_SANS, UI } from '../theme';
+import { marks, type MarkId } from '../../sim/marks';
+import { FONT_SANS } from '../theme';
 import { makeTextButton } from '../uiButton';
+import { icon, INK, INK_DIM, INK_GOLD, INK_GOLD_HEX, INK_HEX, INK_MUTED, paperPanel, type IconName } from '../ui/paper';
 
-// Las marcas de forma: la lista entera, con fecha las conseguidas y en gris
-// las que faltan. Sin insignias: una línea por marca y lo que significa.
+// Las marcas de forma, en un papel: cada una con su icono trazado, en tinta
+// las conseguidas (con fecha) y desvaídas las que faltan. Sin insignias
+// compradas: una línea por marca y lo que significa.
 
 const DEPTH = 55;
 const PANEL_W = 900;
 const PANEL_H = 640;
-const GOLD = '#d9b06a';
+
+const MARK_ICON: Record<MarkId, IconName> = {
+  'first-clean': 'skull',
+  'fondo-30': 'clock',
+  'oleadas-clean': 'zombie',
+  'recovery-20': 'lung',
+  'rest-5': 'heart',
+  'active-150': 'sun',
+  'streak-4': 'flame',
+  'streak-10': 'flame',
+  'rides-25': 'bike',
+  'rides-50': 'bike',
+  'rides-100': 'bike',
+};
 
 const fmtDate = (ms: number): string => new Date(ms).toLocaleDateString('es', { day: 'numeric', month: 'short', year: 'numeric' });
 
@@ -19,25 +33,21 @@ export class MarksPanel {
   private readonly objects: Phaser.GameObjects.GameObject[] = [];
 
   constructor(scene: Phaser.Scene, sessions: readonly SessionRecord[], onClose: () => void) {
-    const cx = RENDER.width / 2;
-    const cy = RENDER.height / 2;
-    const top = cy - PANEL_H / 2;
-    const dim = scene.add.rectangle(cx, cy, RENDER.width, RENDER.height, 0x05060e, 0.8).setDepth(DEPTH).setInteractive();
-    const panel = scene.add.rectangle(cx, cy, PANEL_W, PANEL_H, UI.panel).setDepth(DEPTH).setStrokeStyle(2, 0x3a4256);
-    this.objects.push(dim, panel);
+    const all = marks(sessions);
+    const done = all.filter((m) => m.achievedAtMs !== undefined).length;
+    const sheet = paperPanel(scene, PANEL_W, PANEL_H, DEPTH, 'Marcas de forma', `${done} de ${all.length}. Lo que un pulsómetro puede certificar, con fecha.`);
+    const { cx, top } = sheet;
+    this.objects.push(...sheet.objects);
 
     const text = (x: number, y: number, value: string, size: number, color: string, extra: Partial<Phaser.Types.GameObjects.Text.TextStyle> = {}) => {
       const t = scene.add.text(x, y, value, { fontFamily: FONT_SANS, fontSize: `${size}px`, color, ...extra }).setDepth(DEPTH + 1);
       this.objects.push(t);
       return t;
     };
+    const g = scene.add.graphics().setDepth(DEPTH + 1);
+    this.objects.push(g);
 
-    const all = marks(sessions);
-    const done = all.filter((m) => m.achievedAtMs !== undefined).length;
-    text(cx, top + 36, 'Marcas de forma', 30, UI.textBright, { fontStyle: 'bold' }).setOrigin(0.5);
-    text(cx, top + 70, `${done} de ${all.length}. Lo que un pulsómetro puede certificar, con fecha y sin insignias.`, 15, UI.textMuted).setOrigin(0.5);
-
-    const left = cx - PANEL_W / 2 + 40;
+    const left = sheet.left + 40;
     const colW = (PANEL_W - 80) / 2;
     all.forEach((mark, i) => {
       const col = i % 2;
@@ -45,11 +55,11 @@ export class MarksPanel {
       const x = left + col * colW;
       const y = top + 108 + row * 78;
       const got = mark.achievedAtMs !== undefined;
-      text(x, y, got ? '★' : '○', 20, got ? GOLD : UI.textDim);
-      text(x + 30, y, mark.title, 18, got ? UI.textBright : UI.textMuted, { fontStyle: got ? 'bold' : undefined });
-      text(x + 30, y + 24, mark.detail, 13, UI.textDim, { wordWrap: { width: colW - 40 } });
+      icon(g, MARK_ICON[mark.id], x + 18, y + 16, 30, got ? INK_GOLD_HEX : INK_HEX, got ? 1 : 0.25);
+      text(x + 46, y, mark.title, 18, got ? INK : INK_MUTED, { fontStyle: got ? 'bold' : undefined });
+      text(x + 46, y + 24, mark.detail, 13, INK_DIM, { wordWrap: { width: colW - 56 } });
       if (got && mark.achievedAtMs !== undefined) {
-        text(x + colW - 20, y + 2, fmtDate(mark.achievedAtMs), 13, GOLD).setOrigin(1, 0);
+        text(x + colW - 20, y + 2, fmtDate(mark.achievedAtMs), 13, INK_GOLD).setOrigin(1, 0);
       }
     });
 

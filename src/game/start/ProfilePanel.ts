@@ -26,8 +26,9 @@ import { exportBackup, importBackup, pickFile } from '../../storage/exportImport
 import { loadPlanState, savePlanState } from '../../storage/planStore';
 import { saveRiderProfile } from '../../storage/riderStore';
 import { formatMMSS } from '../format';
-import { FONT_MONO, FONT_SANS, UI } from '../theme';
+import { FONT_MONO, FONT_SANS } from '../theme';
 import { makeTapButton, makeTextButton } from '../uiButton';
+import { INK, INK_DIM, INK_GREEN, INK_MUTED, INK_RED, paperPanel } from '../ui/paper';
 
 const DEPTH = 50;
 const PANEL_W = 900;
@@ -121,37 +122,19 @@ export class ProfilePanel {
 
   private build(): void {
     const cx = RENDER.width / 2;
-    const cy = RENDER.height / 2;
-    const dim = this.scene.add
-      .rectangle(cx, cy, RENDER.width, RENDER.height, 0x05060e, 0.82)
-      .setDepth(DEPTH)
-      .setInteractive(); // se traga los toques de la pantalla de abajo
-    const panel = this.scene.add
-      .rectangle(cx, cy, PANEL_W, PANEL_H, UI.panel)
-      .setDepth(DEPTH)
-      .setStrokeStyle(2, 0x3a4256);
-    const title = this.scene.add
-      .text(cx, 90, 'Tu perfil y la pulsera', {
-        fontFamily: FONT_SANS,
-        fontSize: '32px',
-        fontStyle: 'bold',
-        color: UI.textBright,
-      })
-      .setOrigin(0.5)
-      .setDepth(DEPTH + 1);
-    const subtitle = this.scene.add
-      .text(cx, 124, 'El juego mide con lo que el pulso sí puede dar: reposo, máximo y lo que pasa en cada salida.', {
-        fontFamily: FONT_SANS,
-        fontSize: '15px',
-        color: UI.textDim,
-      })
-      .setOrigin(0.5)
-      .setDepth(DEPTH + 1);
-    this.objects.push(dim, panel, title, subtitle);
+    const sheet = paperPanel(
+      this.scene,
+      PANEL_W,
+      PANEL_H,
+      DEPTH,
+      'Tu perfil y la pulsera',
+      'El juego mide con lo que el pulso sí puede dar: reposo, máximo y lo que pasa en cada salida.',
+    );
+    this.objects.push(...sheet.objects);
 
     // Fila 0: pulsera
     this.label(0, 'Pulsera');
-    this.bandStatusText = this.value(0, '', UI.textMuted, 22).setOrigin(0, 0.5).setX(MINUS_X - 28);
+    this.bandStatusText = this.value(0, '', INK_MUTED, 22).setOrigin(0, 0.5).setX(MINUS_X - 28);
     this.bandButton = this.action(0, 'Conectar', () => void this.toggleBand());
 
     // Fila 1: edad
@@ -171,7 +154,7 @@ export class ProfilePanel {
     this.maxText = this.value(3, '').setY(this.rowY(3) - 8);
     this.stepper(3, (d) => this.setProfile(withManualMax(this.profile, this.profile.hrMaxBpm + d)));
     this.maxSourceText = this.scene.add
-      .text(VALUE_X, this.rowY(3) + 16, '', { fontFamily: FONT_SANS, fontSize: '13px', color: UI.textDim })
+      .text(VALUE_X, this.rowY(3) + 16, '', { fontFamily: FONT_SANS, fontSize: '13px', color: INK_DIM })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
     this.objects.push(this.maxSourceText);
@@ -179,7 +162,7 @@ export class ProfilePanel {
     // Aviso de reserva estrecha: las zonas son el 10 % de la reserva, y con
     // pocos latidos por zona la salida es perseguir un número.
     this.reserveText = this.scene.add
-      .text(cx, this.rowY(5) + 34, '', { fontFamily: FONT_SANS, fontSize: '15px', color: UI.warn, align: 'center', wordWrap: { width: PANEL_W - 80 } })
+      .text(cx, this.rowY(5) + 34, '', { fontFamily: FONT_SANS, fontSize: '15px', color: INK_RED, align: 'center', wordWrap: { width: PANEL_W - 80 } })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
     this.objects.push(this.reserveText);
@@ -192,16 +175,16 @@ export class ProfilePanel {
     const importButton = makeTextButton(this.scene, 760, dataY, 150, 44, 'Importar', () => void this.importData(), DEPTH + 1, 17);
     this.ghostButton = makeTextButton(this.scene, 940, dataY, 190, 44, '', () => this.toggleGhost(), DEPTH + 1, 15);
     this.dataText = this.scene.add
-      .text(cx, dataY + 32, '', { fontFamily: FONT_SANS, fontSize: '13px', color: UI.textDim, align: 'center' })
+      .text(cx, dataY + 32, '', { fontFamily: FONT_SANS, fontSize: '13px', color: INK_DIM, align: 'center' })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
     this.objects.push(exportButton.rect, exportButton.label, importButton.rect, importButton.label, this.ghostButton.rect, this.ghostButton.label, this.dataText);
 
     // Fila 4: escalera
     this.label(4, 'Escalera');
-    this.stepText = this.value(4, '', UI.textBright, 22).setY(this.rowY(4) - 8);
+    this.stepText = this.value(4, '', INK, 22).setY(this.rowY(4) - 8);
     this.stepNoteText = this.scene.add
-      .text(VALUE_X, this.rowY(4) + 16, '', { fontFamily: FONT_SANS, fontSize: '13px', color: UI.textDim })
+      .text(VALUE_X, this.rowY(4) + 16, '', { fontFamily: FONT_SANS, fontSize: '13px', color: INK_DIM })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
     this.objects.push(this.stepNoteText);
@@ -214,7 +197,7 @@ export class ProfilePanel {
 
     // Pie: estado de la prueba en curso y cerrar
     this.testText = this.scene.add
-      .text(cx, this.rowY(7) + 6, '', { fontFamily: FONT_SANS, fontSize: '17px', color: UI.info, align: 'center', wordWrap: { width: PANEL_W - 60 } })
+      .text(cx, this.rowY(7) + 6, '', { fontFamily: FONT_SANS, fontSize: '17px', color: INK, align: 'center', wordWrap: { width: PANEL_W - 60 } })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
     const close = makeTextButton(this.scene, cx, RENDER.height - 54, 220, 52, 'Cerrar', () => this.close(), DEPTH + 1, 24);
@@ -227,15 +210,15 @@ export class ProfilePanel {
 
   private label(row: number, text: string): void {
     const t = this.scene.add
-      .text(LABEL_X, this.rowY(row), text, { fontFamily: FONT_SANS, fontSize: '22px', color: UI.textMuted })
+      .text(LABEL_X, this.rowY(row), text, { fontFamily: FONT_SANS, fontSize: '22px', color: INK_MUTED })
       .setOrigin(0, 0.5)
       .setDepth(DEPTH + 1);
     this.objects.push(t);
   }
 
-  private value(row: number, text: string, color: string = UI.textBright, size = 28): Phaser.GameObjects.Text {
+  private value(row: number, text: string, color: string = INK, size = 28): Phaser.GameObjects.Text {
     const t = this.scene.add
-      .text(VALUE_X, this.rowY(row), text, { fontFamily: FONT_MONO, fontSize: `${size}px`, color })
+      .text(VALUE_X, this.rowY(row), text, { fontFamily: FONT_MONO, fontSize: `${size}px`, fontStyle: 'bold', color })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
     this.objects.push(t);
@@ -244,7 +227,7 @@ export class ProfilePanel {
 
   private note(row: number): Phaser.GameObjects.Text {
     const t = this.scene.add
-      .text(ACTION_X - 110, this.rowY(row), '', { fontFamily: FONT_SANS, fontSize: '16px', color: UI.textDim })
+      .text(ACTION_X - 110, this.rowY(row), '', { fontFamily: FONT_SANS, fontSize: '16px', color: INK_DIM })
       .setOrigin(0, 0.5)
       .setDepth(DEPTH + 1);
     this.objects.push(t);
@@ -282,7 +265,7 @@ export class ProfilePanel {
     this.maxSourceText.setText(`${MAX_SOURCE_ES[p.hrMaxSource]} · zonas de ${zoneWidthBpm(p).toFixed(1).replace('.', ',')} latidos`);
     const warning = reserveWarning(p);
     this.reserveText.setText(warning ?? '');
-    this.maxText.setColor(warning ? UI.warn : UI.textBright);
+    this.maxText.setColor(warning ? INK_RED : INK);
     this.stepText.setText(
       p.anchorBpm !== undefined && p.hardBpm !== undefined
         ? `cómodo ${p.anchorBpm} · fuerte ${p.hardBpm}`
@@ -314,14 +297,14 @@ export class ProfilePanel {
             ? 'toca repetirla: tu reposo bajó'
             : (examNote ?? (due === 'never' ? 'dos anclas del habla afinan el máximo' : '')),
     );
-    this.stepNoteText.setColor(due === 'stale' || due === 'restDropped' ? UI.warn : examNote && exam && exam.easyDeltaBpm <= -2 ? UI.good : UI.textDim);
+    this.stepNoteText.setColor(due === 'stale' || due === 'restDropped' ? INK_RED : examNote && exam && exam.easyDeltaBpm <= -2 ? INK_GREEN : INK_DIM);
     if (!this.active) this.stepButton.rect.setAlpha(locked ? 0.45 : 1);
     this.ghostButton.label.setText(`Fantasma: ${loadPlanState().ghostMode === 'best' ? 'tu mejor vez' : 'la última vez'}`);
 
     const sign = p.intensityPct > 0 ? '+' : '';
     this.intensityText.setText(`${sign}${p.intensityPct} %`);
     this.intensityText.setColor(
-      p.intensityPct >= INTENSITY_MAX || p.intensityPct <= INTENSITY_MIN ? UI.warn : UI.textBright,
+      p.intensityPct >= INTENSITY_MAX || p.intensityPct <= INTENSITY_MIN ? INK_RED : INK,
     );
     this.renderBand();
   }
@@ -332,7 +315,7 @@ export class ProfilePanel {
     const text = status === 'connected' && name ? `${STATUS_ES[status]}: ${name}` : STATUS_ES[status];
     this.bandStatusText.setText(text);
     this.bandStatusText.setColor(
-      status === 'connected' ? UI.good : status === 'error' || status === 'unsupported' ? UI.danger : UI.textMuted,
+      status === 'connected' ? INK_GREEN : status === 'error' || status === 'unsupported' ? INK_RED : INK_MUTED,
     );
     this.bandButton.label.setText(status === 'connected' ? 'Desconectar' : 'Conectar');
     const canConnect = status !== 'unsupported' && status !== 'requesting' && status !== 'connecting';
@@ -410,7 +393,7 @@ export class ProfilePanel {
     }
     if (this.ridesCount() < STEP_TEST_FROM_RIDES) {
       this.testText.setText(`La escalera pide un escalón fuerte: se abre a partir de la salida ${STEP_TEST_FROM_RIDES}. Hasta entonces, edad y reposo bastan.`);
-      this.testText.setColor(UI.textMuted);
+      this.testText.setColor(INK_MUTED);
       return;
     }
     const source = this.scene.registry.get('heartRateSource') as HeartRateSource;
@@ -434,7 +417,7 @@ export class ProfilePanel {
     const live = progress.liveBpm > 0 ? `♥ ${progress.liveBpm}` : 'esperando pulso…';
     const clock = progress.elapsedSec === 0 ? '' : ` · quedan ${formatMMSS(progress.stageRemainingSec)}`;
     this.testText.setText(`${stageTitle}${clock} · ${live}\n${hint}`);
-    this.testText.setColor(progress.stage === 'hard' ? UI.warn : UI.info);
+    this.testText.setColor(progress.stage === 'hard' ? INK_RED : INK);
   }
 
   private finishTest(): void {
@@ -444,14 +427,14 @@ export class ProfilePanel {
     this.stopTest();
     if (result === undefined) {
       this.testText.setText('No llegaron muestras suficientes de la pulsera. Repite la escalera.');
-      this.testText.setColor(UI.warn);
+      this.testText.setColor(INK_RED);
       return;
     }
     this.setProfile(withStepTest(this.profile, result.easyBpm, result.hardBpm, Date.now()));
     this.testText.setText(
       `Escalera: cómodo ${result.easyBpm} · fuerte ${result.hardBpm} → máximo ${this.profile.hrMaxBpm} bpm (${MAX_SOURCE_ES[this.profile.hrMaxSource]}).${this.examLine()}`,
     );
-    this.testText.setColor(UI.good);
+    this.testText.setColor(INK_GREEN);
   }
 
   private stopTest(): void {

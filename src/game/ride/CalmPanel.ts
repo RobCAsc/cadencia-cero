@@ -5,8 +5,9 @@ import { RestTest } from '../../sim/heartRateTests';
 import type { SessionRecord } from '../../sim/history';
 import { readiness, type ReadinessVerdict } from '../../sim/progress';
 import { formatMMSS } from '../format';
-import { FONT_MONO, FONT_SANS, UI } from '../theme';
+import { FONT_MONO, FONT_SANS } from '../theme';
 import { makeTextButton, type TapButton } from '../uiButton';
+import { INK, INK_DIM, INK_GOLD, INK_GREEN, INK_HEX, INK_MUTED, INK_RED, INK_RED_HEX, paper } from '../ui/paper';
 
 // El ritual de salida: un minuto quieto sobre la bici con la pulsera puesta.
 // Sirve para tres cosas a la vez: confirma que la señal llega antes de que
@@ -64,16 +65,13 @@ export class CalmPanel {
       .rectangle(cx, RENDER.height / 2, RENDER.width, RENDER.height, 0x05050a, 0.45)
       .setDepth(DEPTH)
       .setInteractive();
-    const panel = scene.add
-      .rectangle(cx, top + PANEL_H / 2, PANEL_W, PANEL_H, 0x0b0e18, 0.9)
-      .setDepth(DEPTH)
-      .setStrokeStyle(2, 0x2a3142);
+    const panel = paper(scene, cx - PANEL_W / 2, top, PANEL_W, PANEL_H, { depth: DEPTH, tilt: 0.004 });
     const title = scene.add
       .text(cx, top + 38, 'Un minuto de calma', {
         fontFamily: FONT_SANS,
         fontSize: '34px',
         fontStyle: 'bold',
-        color: UI.textBright,
+        color: INK,
       })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
@@ -81,25 +79,25 @@ export class CalmPanel {
       .text(cx, top + 74, 'Quieto sobre la bici. Respira. La noche llega mientras tanto.', {
         fontFamily: FONT_SANS,
         fontSize: '18px',
-        color: UI.textMuted,
+        color: INK_MUTED,
       })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
     this.countdown = scene.add
-      .text(cx, top + 140, '1:00', { fontFamily: FONT_MONO, fontSize: '64px', fontStyle: 'bold', color: UI.textBright })
+      .text(cx, top + 140, '1:00', { fontFamily: FONT_MONO, fontSize: '64px', fontStyle: 'bold', color: INK })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
     this.bpmText = scene.add
-      .text(cx, top + 192, '♥ ––', { fontFamily: FONT_MONO, fontSize: '28px', color: UI.danger })
+      .text(cx, top + 192, '♥ ––', { fontFamily: FONT_MONO, fontSize: '28px', fontStyle: 'bold', color: INK_RED })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
     this.bar = scene.add.graphics().setDepth(DEPTH + 1);
     this.hint = scene.add
-      .text(cx, top + 232, 'Esperando el pulso de la pulsera…', { fontFamily: FONT_SANS, fontSize: '16px', color: UI.textDim })
+      .text(cx, top + 232, 'Esperando el pulso de la pulsera…', { fontFamily: FONT_SANS, fontSize: '16px', color: INK_DIM })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
     this.verdictText = scene.add
-      .text(cx, top + 262, '', { fontFamily: FONT_SANS, fontSize: '18px', color: UI.textMuted, align: 'center' })
+      .text(cx, top + 262, '', { fontFamily: FONT_SANS, fontSize: '18px', color: INK_MUTED, align: 'center' })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
 
@@ -124,7 +122,7 @@ export class CalmPanel {
         .text(cx, top + PANEL_H - 84, line, {
           fontFamily: FONT_SANS,
           fontSize: opts.safetyNote ? '13px' : '16px',
-          color: opts.safetyNote ? UI.textDim : '#d9b06a',
+          color: opts.safetyNote ? INK_DIM : INK_GOLD,
           align: 'center',
           wordWrap: { width: PANEL_W - 60 },
         })
@@ -152,10 +150,10 @@ export class CalmPanel {
           ? 'Sin pulso todavía. Conecta la pulsera desde el campamento, o salta el minuto.'
           : 'Esperando el pulso de la pulsera…',
       );
-      this.hint.setColor(waitedMs > NO_SIGNAL_AFTER_MS ? UI.warn : UI.textDim);
+      this.hint.setColor(waitedMs > NO_SIGNAL_AFTER_MS ? INK_RED : INK_DIM);
     } else {
       this.hint.setText('Midiendo tu reposo de hoy.');
-      this.hint.setColor(UI.textDim);
+      this.hint.setColor(INK_DIM);
     }
 
     if (progress.done) this.complete();
@@ -192,21 +190,21 @@ export class CalmPanel {
           ? ''
           : `Con ${Math.max(0, 3 - n)} lectura${3 - n === 1 ? '' : 's'} más sabré cuál es tu normal.`,
       );
-      this.verdictText.setColor(UI.textDim);
+      this.verdictText.setColor(INK_DIM);
       return;
     }
     if (verdict.state === 'rest') {
       this.verdictText.setText(
         `${verdict.deltaBpm} latidos por encima de tu normal (${verdict.baselineBpm}).\nHoy toca descansar, no aflojar. Vuelve mañana.`,
       );
-      this.verdictText.setColor(UI.danger);
+      this.verdictText.setColor(INK_RED);
       return;
     }
     if (verdict.state === 'elevated') {
       this.verdictText.setText(
         `${verdict.deltaBpm} latidos por encima de tu normal (${verdict.baselineBpm}).\nHoy tu cuerpo pide suave.`,
       );
-      this.verdictText.setColor(UI.warn);
+      this.verdictText.setColor(INK_GOLD);
       return;
     }
     const delta = verdict.deltaBpm ?? 0;
@@ -215,7 +213,7 @@ export class CalmPanel {
         ? `Por debajo de tu normal (${verdict.baselineBpm}). Vienes fresco.`
         : `En tu normal (${verdict.baselineBpm}). Adelante con el plan.`,
     );
-    this.verdictText.setColor(UI.good);
+    this.verdictText.setColor(INK_GREEN);
   }
 
   private drawBar(frac: number): void {
@@ -223,9 +221,9 @@ export class CalmPanel {
     const w = 400;
     const y = 150 + 214;
     this.bar.clear();
-    this.bar.fillStyle(0x2a3142, 1);
+    this.bar.fillStyle(INK_HEX, 0.15);
     this.bar.fillRect(cx - w / 2, y, w, 6);
-    this.bar.fillStyle(0x7ec8ff, 1);
+    this.bar.fillStyle(INK_RED_HEX, 0.9);
     this.bar.fillRect(cx - w / 2, y, Math.round(w * Math.max(0, Math.min(1, frac))), 6);
   }
 

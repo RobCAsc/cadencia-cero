@@ -15,17 +15,34 @@ import type { RideRpe, RideSummary } from '../../sim/types';
 import { activeSec } from '../../sim/zones';
 import { formatMMSS } from '../format';
 import { promptText } from '../textPrompt';
-import { FONT_MONO, FONT_SANS, UI, ZONE_COLOR } from '../theme';
-import { makeTextButton, type TapButton } from '../uiButton';
+import { FONT_MONO, FONT_SANS, ZONE_COLOR } from '../theme';
+import { makeTextButton } from '../uiButton';
+import {
+  face,
+  heading,
+  icon,
+  INK,
+  INK_DIM,
+  INK_GOLD,
+  INK_GOLD_HEX,
+  INK_GREEN,
+  INK_GREEN_HEX,
+  INK_HEX,
+  INK_MUTED,
+  INK_RED,
+  INK_RED_HEX,
+  PAPER_DARK,
+  paper,
+  stamp,
+  type IconName,
+} from '../ui/paper';
 
 const DEPTH = 30;
 const PANEL_X = 200;
-const PANEL_Y = 40;
+const PANEL_Y = 36;
 const PANEL_W = 880;
-const PANEL_H = 646;
-const LEFT_X = PANEL_X + 40;
-const RIGHT_X = PANEL_X + 470;
-const GOLD = '#d9b06a';
+const PANEL_H = 652;
+const LEFT_X = PANEL_X + 36;
 const HARD_TARGETS = new Set(['anaerobic', 'threshold', 'mixed', 'tempo']);
 
 const km1 = (km: number): string => km.toFixed(1).replace('.', ',');
@@ -33,9 +50,9 @@ const km2 = (km: number): string => km.toFixed(2).replace('.', ',');
 const fmtInt = (n: number): string => n.toLocaleString('es');
 
 const RPE_ES: ReadonlyArray<readonly [RideRpe, string]> = [
-  ['easy', 'Fácil'],
-  ['right', 'Justa'],
-  ['hard', 'Demasiado'],
+  ['easy', 'fácil'],
+  ['right', 'justa'],
+  ['hard', 'demasiado'],
 ];
 /** El diario de una palabra: las habituales a un toque, y "otra" abre el teclado. */
 const NOTE_CHIPS = ['cansado', 'dormí mal', 'con energía', 'genial'];
@@ -57,196 +74,213 @@ export interface FinishPanelOptions {
   onBack: () => void;
 }
 
+interface Tap {
+  hit: Phaser.GameObjects.Rectangle;
+  paint: (selected: boolean) => void;
+}
+
 /**
- * El resumen del amanecer: lo que hiciste hoy, lo que sumó a la semana y a
- * la Ruta, los récords y marcas que rompiste; y tres preguntas que alimentan
- * el plan: cómo te pareció (la calibración aprende con el rider de acuerdo),
- * una palabra del día (el diario) y cuándo vuelves (el día comprometido es lo
- * que más pesa en el hábito). La noche sigue viva detrás, a propósito:
- * terminar es ver el sol.
+ * El resumen del amanecer, en un papel: cuatro fichas grandes con icono, los
+ * minutos por zona, tres caras para decir cómo fue, una palabra del día, y
+ * tres casillas de calendario para comprometer el siguiente. Lo que sumó a
+ * la semana y a la Ruta, y los récords y marcas, debajo. La noche sigue viva
+ * detrás, a propósito: terminar es ver el sol.
  */
 export class FinishPanel {
+  private readonly scene: Phaser.Scene;
   private readonly noteText: Phaser.GameObjects.Text;
-  private readonly rpeButtons: Array<{ rpe: RideRpe; button: TapButton }> = [];
-  private readonly noteButtons: TapButton[] = [];
-  private readonly dayButtons: TapButton[] = [];
+  private readonly rpeTaps: Array<{ rpe: RideRpe; tap: Tap }> = [];
+  private readonly noteTaps: Array<{ tap: Tap; label: Phaser.GameObjects.Text }> = [];
+  private readonly dayTaps: Tap[] = [];
   private readonly hardRide: boolean;
 
   constructor(scene: Phaser.Scene, opts: FinishPanelOptions) {
+    this.scene = scene;
     const before = opts.history.filter((r) => r.id !== opts.record.id);
     const nowMs = opts.record.startedAtMs + opts.record.durationSec * 1000;
     this.hardRide = HARD_TARGETS.has(opts.record.target);
 
     // El dim se traga los toques para que la HUD de abajo quede inerte.
     scene.add
-      .rectangle(RENDER.width / 2, RENDER.height / 2, RENDER.width, RENDER.height, 0x05050a, 0.35)
+      .rectangle(RENDER.width / 2, RENDER.height / 2, RENDER.width, RENDER.height, 0x05050a, 0.45)
       .setDepth(DEPTH)
       .setInteractive();
-    scene.add
-      .rectangle(PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 0x0b0e18, 0.86)
-      .setOrigin(0, 0)
-      .setDepth(DEPTH)
-      .setStrokeStyle(2, 0x2a3142);
+    paper(scene, PANEL_X, PANEL_Y, PANEL_W, PANEL_H, { depth: DEPTH, tilt: 0 });
 
-    const text = (
-      x: number,
-      y: number,
-      value: string,
-      size: number,
-      color: string,
-      extra: Partial<Phaser.Types.GameObjects.Text.TextStyle> = {},
-    ) =>
+    const text = (x: number, y: number, value: string, size: number, color: string, extra: Partial<Phaser.Types.GameObjects.Text.TextStyle> = {}) =>
       scene.add
         .text(x, y, value, { fontFamily: size >= 24 ? FONT_MONO : FONT_SANS, fontSize: `${size}px`, color, ...extra })
         .setDepth(DEPTH + 1);
+    const g = scene.add.graphics().setDepth(DEPTH + 1);
 
     const cx = RENDER.width / 2;
-    scene.add
-      .text(cx, PANEL_Y + 40, opts.completed ? '¡SOBREVIVISTE!' : 'SALIDA CORTADA', {
-        fontFamily: FONT_SANS,
-        fontSize: '50px',
-        fontStyle: 'bold',
-        color: opts.completed ? UI.good : UI.warn,
-      })
-      .setOrigin(0.5)
-      .setDepth(DEPTH + 1);
-    scene.add
-      .text(
-        cx,
-        PANEL_Y + 80,
-        opts.completed
-          ? `${opts.record.programName} · amaneció`
-          : `${opts.record.programName} · lo pedaleado queda guardado`,
-        { fontFamily: FONT_SANS, fontSize: '18px', color: UI.textMuted },
-      )
-      .setOrigin(0.5)
-      .setDepth(DEPTH + 1);
+    icon(g, opts.completed ? 'sun' : 'skull', cx - 250, PANEL_Y + 46, 44, opts.completed ? INK_GOLD_HEX : INK_RED_HEX);
+    text(cx, PANEL_Y + 46, opts.completed ? '¡SOBREVIVISTE!' : 'SALIDA CORTADA', 44, opts.completed ? INK_GREEN : INK_RED, { fontFamily: FONT_SANS, fontStyle: 'bold' }).setOrigin(0.5);
+    text(cx, PANEL_Y + 82, opts.completed ? `${opts.record.programName} · amaneció` : `${opts.record.programName} · lo pedaleado queda guardado`, 15, INK_MUTED).setOrigin(0.5);
 
-    // ---- izquierda: la salida en números ----
-    let y = PANEL_Y + 116;
+    // ---- cuatro fichas ----
     const s = opts.summary;
-    const rows: Array<[string, string]> = [
-      ['Distancia', `${km2(s.distanceM / 1000)} km`],
-      ['Tiempo', formatMMSS(s.durationSec)],
-      ['Alcanzado', `${s.timesCaught} ${s.timesCaught === 1 ? 'vez' : 'veces'}`],
+    const cardio = Math.round(activeSec(s.zoneSec) / 60);
+    const tiles: Array<[IconName, string, string]> = [
+      ['road', `${km2(s.distanceM / 1000)}`, 'km'],
+      ['clock', formatMMSS(s.durationSec), 'tiempo'],
+      ['zombie', `${s.timesCaught}`, s.timesCaught === 1 ? 'vez alcanzado' : 'veces alcanzado'],
+      ['heart', `${cardio}`, opts.mode === 'feel' ? 'min cardio (plan)' : 'min de cardio'],
     ];
-    if (opts.mode === 'heartRate') {
-      if (opts.record.preRideRestBpm !== undefined) {
-        rows.push(['Reposo de hoy', `${opts.record.preRideRestBpm} bpm`]);
-      }
-      rows.push(['Pulso medio', `${Math.round(s.avgHeartRateBpm)} bpm`]);
-      rows.push(['Pico sostenido', `${Math.round(s.peakHeartRateBpm)} bpm`]);
-      rows.push(['Cardio (Z2+)', `${Math.round(activeSec(s.zoneSec) / 60)} min`]);
-      if (s.durationSec > 0) {
-        rows.push(['Precisión de zona', `${Math.round((s.inZoneSec / s.durationSec) * 100)} %`]);
-      }
-      if (s.bestInZoneRunSec >= 60) rows.push(['Mejor racha en zona', formatMMSS(s.bestInZoneRunSec)]);
-      if (s.recoveryDrops.length > 0) {
-        const drop = s.recoveryDrops.reduce((a, b) => a + b, 0) / s.recoveryDrops.length;
-        rows.push(['Recuperación en 1 min', `${Math.round(drop)} lpm`]);
-      }
-    } else if (opts.mode === 'feel') {
-      rows.push(['Cardio (por el plan)', `${Math.round(activeSec(s.zoneSec) / 60)} min`]);
-    } else {
-      rows.push(['Cadencia media', `${Math.round(s.avgCadenceRpm)} rpm`]);
-    }
-    const pitch = rows.length > 7 ? 28 : rows.length > 6 ? 30 : 38;
-    for (const [label, value] of rows) {
-      text(LEFT_X, y, label, 17, UI.textMuted);
-      text(LEFT_X + 380, y - 4, value, 24, UI.textBright).setOrigin(1, 0);
-      y += pitch;
-    }
+    const tileW = 200;
+    tiles.forEach(([ico, value, label], i) => {
+      const tx = LEFT_X + i * (tileW + 4);
+      const ty = PANEL_Y + 104;
+      g.fillStyle(PAPER_DARK, 0.9);
+      g.fillRect(tx, ty, tileW, 84);
+      icon(g, ico, tx + 26, ty + 42, 30, ico === 'zombie' ? INK_RED_HEX : INK_HEX, 0.85);
+      text(tx + 52, ty + 14, value, 30, INK, { fontStyle: 'bold' });
+      text(tx + 52, ty + 54, label, 13, INK_MUTED);
+    });
 
-    // ---- derecha: minutos por zona ----
-    text(RIGHT_X, PANEL_Y + 116, opts.mode === 'feel' ? 'MINUTOS POR ZONA (PRESCRITA)' : 'MINUTOS POR ZONA', 13, UI.textDim).setLetterSpacing(2);
+    // ---- minutos por zona (izquierda) y el pulso (derecha) ----
+    const zoneY = PANEL_Y + 204;
+    heading(scene, LEFT_X, zoneY, 'Minutos por zona', 12, INK_MUTED, DEPTH + 1);
     const zones = s.zoneSec;
     const maxSec = Math.max(60, ...zones);
-    const g = scene.add.graphics().setDepth(DEPTH + 1);
-    const barW = 300;
+    const barW = 240;
     for (let z = 1; z <= 5; z++) {
-      const zy = PANEL_Y + 142 + (z - 1) * 26;
+      const zy = zoneY + 24 + (z - 1) * 24;
       const sec = zones[z] ?? 0;
       const w = Math.max(2, (barW * sec) / maxSec);
-      g.fillStyle(0x1c2334, 1);
-      g.fillRect(RIGHT_X + 40, zy, barW, 18);
-      g.fillStyle(ZONE_COLOR[z] ?? 0xffffff, sec > 0 ? 1 : 0.35);
-      g.fillRect(RIGHT_X + 40, zy, w, 18);
-      text(RIGHT_X, zy, `Z${z}`, 15, UI.textMuted);
-      text(RIGHT_X + 40 + barW + 10, zy, `${Math.round(sec / 60)} min`, 14, UI.textMuted);
+      g.fillStyle(INK_HEX, 0.1);
+      g.fillRect(LEFT_X + 34, zy, barW, 16);
+      g.fillStyle(ZONE_COLOR[z] ?? 0xffffff, sec > 0 ? 0.95 : 0.3);
+      g.fillRect(LEFT_X + 34, zy, w, 16);
+      text(LEFT_X, zy - 1, `Z${z}`, 14, INK_MUTED);
+      text(LEFT_X + 34 + barW + 8, zy - 1, `${Math.round(sec / 60)}'`, 13, INK_MUTED);
     }
-    const easy = zones[0] ?? 0;
-    text(RIGHT_X, PANEL_Y + 142 + 5 * 26, `suave (bajo Z1): ${Math.round(easy / 60)} min`, 13, UI.textDim);
 
-    // ---- derecha, abajo: cómo fue, una palabra, cuándo vuelves ----
-    const askY = PANEL_Y + 300;
-    text(RIGHT_X, askY, '¿CÓMO FUE?', 13, UI.textDim).setLetterSpacing(2);
+    const rightX = LEFT_X + 360;
+    const rows: Array<[string, string]> = [];
+    if (opts.mode === 'heartRate') {
+      if (opts.record.preRideRestBpm !== undefined) rows.push(['reposo de hoy', `${opts.record.preRideRestBpm}`]);
+      rows.push(['pulso medio', `${Math.round(s.avgHeartRateBpm)}`]);
+      rows.push(['pico sostenido', `${Math.round(s.peakHeartRateBpm)}`]);
+      if (s.durationSec > 0) rows.push(['precisión de zona', `${Math.round((s.inZoneSec / s.durationSec) * 100)} %`]);
+      if (s.bestInZoneRunSec >= 60) rows.push(['mejor racha en zona', formatMMSS(s.bestInZoneRunSec)]);
+      if (s.recoveryDrops.length > 0) {
+        const drop = s.recoveryDrops.reduce((a, b) => a + b, 0) / s.recoveryDrops.length;
+        rows.push(['recuperación en 1 min', `${Math.round(drop)}`]);
+      }
+    } else if (opts.mode === 'cadence') {
+      rows.push(['cadencia media', `${Math.round(s.avgCadenceRpm)} rpm`]);
+    }
+    if (rows.length > 0) heading(scene, rightX, zoneY, 'El pulso', 12, INK_MUTED, DEPTH + 1);
+    rows.forEach(([label, value], i) => {
+      const ry = zoneY + 24 + i * 23;
+      text(rightX, ry, label, 13, INK_MUTED);
+      text(rightX + 300, ry - 3, value, 18, INK, { fontStyle: 'bold' }).setOrigin(1, 0);
+      g.lineStyle(1, INK_HEX, 0.15);
+      g.lineBetween(rightX, ry + 18, rightX + 300, ry + 18);
+    });
+    const beats = opts.mode === 'heartRate' ? heartbeats(s.avgHeartRateBpm, s.durationSec) : undefined;
+    if (beats !== undefined) {
+      icon(g, 'heart', rightX + 8, zoneY + 24 + rows.length * 23 + 12, 14, INK_RED_HEX);
+      text(rightX + 22, zoneY + 24 + rows.length * 23 + 4, `latió unas ${fmtInt(beats)} veces`, 13, INK_MUTED);
+    }
+
+    // ---- las tres preguntas ----
+    const askY = PANEL_Y + 360;
+    heading(scene, LEFT_X, askY, '¿Cómo fue?', 12, INK_MUTED, DEPTH + 1);
     RPE_ES.forEach(([rpe, label], i) => {
-      const button = makeTextButton(scene, RIGHT_X + 60 + i * 128, askY + 40, 118, 38, label, () => this.chooseRpe(rpe, opts), DEPTH + 1, 17);
-      this.rpeButtons.push({ rpe, button });
-    });
-    text(RIGHT_X, askY + 74, 'UNA PALABRA DEL DÍA', 13, UI.textDim).setLetterSpacing(2);
-    const chipW = 72;
-    [...NOTE_CHIPS, 'otra…'].forEach((word, i) => {
-      const button = makeTextButton(scene, RIGHT_X + chipW / 2 + i * (chipW + 6), askY + 112, chipW, 34, word, () => void this.chooseNote(i, word, opts), DEPTH + 1, 13);
-      this.noteButtons.push(button);
-    });
-    text(RIGHT_X, askY + 144, '¿CUÁNDO VUELVES?', 13, UI.textDim).setLetterSpacing(2);
-    nextRideOptions(nowMs).forEach((option, i) => {
-      const button = makeTextButton(scene, RIGHT_X + 60 + i * 128, askY + 184, 118, 38, option.label, () => this.chooseDay(i, option.dayStartMs, opts), DEPTH + 1, 14);
-      this.dayButtons.push(button);
+      const fx = LEFT_X + 40 + i * 78;
+      const fy = askY + 52;
+      const tap = this.makeTap(fx, fy, 70, 74, (gfx, selected) => {
+        face(gfx, fx, fy - 8, 22, rpe, selected ? INK_GREEN_HEX : INK_HEX, selected ? 1 : 0.55);
+      });
+      text(fx, fy + 22, label, 11, INK_MUTED).setOrigin(0.5, 0);
+      tap.hit.on('pointerdown', () => this.chooseRpe(rpe, opts));
+      this.rpeTaps.push({ rpe, tap });
     });
 
-    // ---- izquierda, abajo: semana, Ruta, el corazón, récords y marcas, nota ----
-    y = Math.max(y + 6, PANEL_Y + 392);
+    const noteX = LEFT_X + 280;
+    heading(scene, noteX, askY, 'Una palabra del día', 12, INK_MUTED, DEPTH + 1);
+    [...NOTE_CHIPS, 'otra…'].forEach((word, i) => {
+      const chipW = 88;
+      const nx = noteX + chipW / 2 + (i % 3) * (chipW + 6);
+      const ny = askY + 36 + Math.floor(i / 3) * 34;
+      const label = text(nx, ny, word, 12, INK).setOrigin(0.5).setDepth(DEPTH + 3);
+      const tap = this.makeTap(nx, ny, chipW, 28, (gfx, selected) => {
+        gfx.fillStyle(selected ? INK_GREEN_HEX : PAPER_DARK, selected ? 0.9 : 1);
+        gfx.fillRect(nx - chipW / 2, ny - 14, chipW, 28);
+        gfx.lineStyle(1.5, INK_HEX, 0.5);
+        gfx.strokeRect(nx - chipW / 2, ny - 14, chipW, 28);
+      });
+      tap.hit.on('pointerdown', () => void this.chooseNote(i, word, opts));
+      this.noteTaps.push({ tap, label });
+    });
+
+    const dayX = LEFT_X + 580;
+    heading(scene, dayX, askY, '¿Cuándo vuelves?', 12, INK_MUTED, DEPTH + 1);
+    nextRideOptions(nowMs).forEach((option, i) => {
+      const dx = dayX + 32 + i * 74;
+      const dy = askY + 52;
+      const dayName = new Date(option.dayStartMs).toLocaleDateString('es', { weekday: 'short' }).replace('.', '');
+      const dayNum = new Date(option.dayStartMs).getDate();
+      const tap = this.makeTap(dx, dy, 64, 74, (gfx, selected) => {
+        gfx.fillStyle(selected ? INK_GREEN_HEX : PAPER_DARK, selected ? 0.9 : 1);
+        gfx.fillRect(dx - 30, dy - 34, 60, 68);
+        gfx.fillStyle(selected ? INK_HEX : INK_RED_HEX, 0.9);
+        gfx.fillRect(dx - 30, dy - 34, 60, 14);
+      });
+      text(dx, dy - 27, dayName, 10, '#f2eadc').setOrigin(0.5).setDepth(DEPTH + 3);
+      text(dx, dy - 2, `${dayNum}`, 26, INK, { fontStyle: 'bold' }).setOrigin(0.5).setDepth(DEPTH + 3);
+      text(dx, dy + 22, i === 0 ? 'mañana' : '', 10, INK_MUTED).setOrigin(0.5).setDepth(DEPTH + 3);
+      tap.hit.on('pointerdown', () => this.chooseDay(i, option.dayStartMs, opts));
+      this.dayTaps.push(tap);
+    });
+
+    // ---- lo que sumó ----
+    let y = PANEL_Y + 470;
     const week = summarizeWeek(opts.history, weekStartMs(nowMs));
     const streak = streakWeeks(opts.history, nowMs);
-    const weekLine =
-      `Esta semana: ${week.sessions} de ${week.goal.sessionsPerWeek} salidas · ` +
-      `${Math.round(week.activeMin)} de ${week.goal.activeMinPerWeek} min de cardio` +
-      (streak >= 2 ? ` · racha de ${streak} semanas` : week.met ? ' · semana cumplida' : '');
-    text(LEFT_X, y, weekLine, 15, week.met ? UI.good : UI.textMuted, { wordWrap: { width: 410 } });
-    y += 36;
-
+    icon(g, 'bike', LEFT_X + 10, y + 9, 18, INK_HEX, 0.8);
+    text(LEFT_X + 26, y, `Semana: ${week.sessions} de ${week.goal.sessionsPerWeek} salidas · ${Math.round(week.activeMin)} de ${week.goal.activeMinPerWeek} min${streak >= 2 ? ` · racha de ${streak}` : week.met ? ' · cumplida' : ''}`, 14, week.met ? INK_GREEN : INK_MUTED);
     const routeBefore = routeProgress(before);
     const routeAfter = routeProgress(opts.history);
     const added = routeAfter.totalKm - routeBefore.totalKm;
     const reachedNew = routeAfter.reached > routeBefore.reached;
-    const routeLine = reachedNew
-      ? `La Ruta: +${km1(added)} km · ¡llegaste a ${routeAfter.last?.name ?? 'un refugio'}!`
-      : `La Ruta: +${km1(added)} km · faltan ${km1(routeAfter.remainingKm)} km hasta ${routeAfter.next.name}`;
-    text(LEFT_X, y, routeLine, 15, GOLD, { wordWrap: { width: 410 } });
-    y += 32;
-
-    const beats = opts.mode === 'heartRate' ? heartbeats(s.avgHeartRateBpm, s.durationSec) : undefined;
-    if (beats !== undefined) {
-      text(LEFT_X, y, `Hoy tu corazón latió unas ${fmtInt(beats)} veces entrenando.`, 15, UI.textMuted);
-      y += 32;
-    }
-
+    icon(g, 'road', LEFT_X + 440, y + 9, 18, INK_GOLD_HEX, 0.9);
+    text(LEFT_X + 456, y, reachedNew ? `+${km1(added)} km · ¡${routeAfter.last?.name ?? 'refugio'}!` : `+${km1(added)} km · faltan ${km1(routeAfter.remainingKm)} hasta ${routeAfter.next.name}`, 14, INK_GOLD, { wordWrap: { width: 360 } });
+    y += 30;
     const records = brokenRecords(before, opts.record).map((r) => `★ ${r}`);
     const marks = newMarks(before, opts.history).map((m) => `★ Marca: ${m.title}`);
     const wins = [...records, ...marks];
     if (wins.length > 0) {
-      text(LEFT_X, y, wins.join('   '), 15, GOLD, { wordWrap: { width: 410 } });
-      y += 36;
+      icon(g, 'trophy', LEFT_X + 10, y + 9, 18, INK_GOLD_HEX);
+      text(LEFT_X + 26, y, wins.join('   '), 14, INK_GOLD, { wordWrap: { width: PANEL_W - 100 } });
+      y += 30;
     }
-    this.noteText = text(LEFT_X, Math.min(y, PANEL_Y + 560), '', 14, UI.warn, { wordWrap: { width: 410 } });
+    if (this.hardRide) stamp(scene, PANEL_X + PANEL_W - 130, PANEL_Y + PANEL_H - 100, 'mañana descansa', INK_GOLD, DEPTH + 2, 12);
+    this.noteText = text(LEFT_X, Math.min(y, PANEL_Y + 552), '', 13, INK_GOLD, { wordWrap: { width: PANEL_W - 300 } });
 
-    makeTextButton(scene, cx, PANEL_Y + PANEL_H - 36, 320, 48, 'Volver al campamento', opts.onBack, DEPTH + 1, 20);
+    makeTextButton(scene, cx, PANEL_Y + PANEL_H - 36, 320, 48, 'Volver al campamento', opts.onBack, DEPTH + 2, 20);
+  }
+
+  /** Un área tocable con su dibujo, que se repinta al seleccionar. */
+  private makeTap(cx: number, cy: number, w: number, h: number, draw: (g: Phaser.GameObjects.Graphics, selected: boolean) => void): Tap {
+    const gfx = this.scene.add.graphics().setDepth(DEPTH + 2);
+    const hit = this.scene.add.rectangle(cx, cy, w, h, 0xffffff, 0.001).setDepth(DEPTH + 4).setInteractive({ useHandCursor: true });
+    const paint = (selected: boolean) => {
+      gfx.clear();
+      draw(gfx, selected);
+    };
+    paint(false);
+    return { hit, paint };
   }
 
   private chooseRpe(rpe: RideRpe, opts: FinishPanelOptions): void {
-    for (const { rpe: r, button } of this.rpeButtons) {
-      button.rect.setFillStyle(r === rpe ? 0x1e8449 : UI.button);
-      button.rect.setAlpha(r === rpe ? 1 : 0.55);
-    }
+    for (const { rpe: r, tap } of this.rpeTaps) tap.paint(r === rpe);
     const note = opts.onRpe(rpe);
-    // Tras una salida dura, el descanso es un recurso y se dice.
     const rest = this.hardRide ? ' Mañana descansa o suave: el cuerpo asimila hoy.' : '';
-    this.noteText.setText(
-      note ?? (rpe === 'hard' ? `Anotado. Si la próxima también es demasiado, el plan afloja.${rest}` : `Anotado.${rest}`),
-    );
-    this.noteText.setColor(note ? UI.warn : UI.textDim);
+    this.noteText.setText(note ?? (rpe === 'hard' ? `Anotado. Si la próxima también es demasiado, el plan afloja.${rest}` : `Anotado.${rest}`));
+    this.noteText.setColor(note ? INK_RED : INK_DIM);
   }
 
   private async chooseNote(index: number, word: string, opts: FinishPanelOptions): Promise<void> {
@@ -255,20 +289,17 @@ export class FinishPanel {
       const typed = await promptText({ title: 'Una palabra sobre el día', placeholder: 'estresado, sin ganas, feliz…', maxLength: 30 });
       if (!typed) return;
       note = typed;
-      this.noteButtons[index]?.label.setText(note.length > 9 ? `${note.slice(0, 8)}…` : note);
+      this.noteTaps[index]?.label.setText(note.length > 10 ? `${note.slice(0, 9)}…` : note);
     }
-    this.noteButtons.forEach((b, i) => {
-      b.rect.setFillStyle(i === index ? 0x1e8449 : UI.button);
-      b.rect.setAlpha(i === index ? 1 : 0.55);
+    this.noteTaps.forEach(({ tap, label }, i) => {
+      tap.paint(i === index);
+      label.setColor(i === index ? '#f2eadc' : INK);
     });
     opts.onNote(note);
   }
 
   private chooseDay(index: number, dayStartMs: number, opts: FinishPanelOptions): void {
-    this.dayButtons.forEach((b, i) => {
-      b.rect.setFillStyle(i === index ? 0x1e8449 : UI.button);
-      b.rect.setAlpha(i === index ? 1 : 0.55);
-    });
+    this.dayTaps.forEach((tap, i) => tap.paint(i === index));
     opts.onNextRide(dayStartMs);
   }
 }
