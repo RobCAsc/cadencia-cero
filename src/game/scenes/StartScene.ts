@@ -21,11 +21,13 @@ import {
   type PlanPhase,
   type Recommendation,
 } from '../../sim/progress';
+import { blocksToProgram, type Block } from '../../sim/programRules';
 import { reserveWarning, stepTestDue, zoneWidthBpm, type StoredRiderProfile } from '../../sim/riderProfile';
 import { loadPlanState, savePlanState, type PlanState } from '../../storage/planStore';
 import { Atmosphere } from '../atmosphere';
 import { gameAudio } from '../audio';
 import { formatMMSS } from '../format';
+import { BuilderPanel } from '../start/BuilderPanel';
 import { Campfire } from '../start/Campfire';
 import { MarksPanel } from '../start/MarksPanel';
 import { hasCeremony, PhasePanel } from '../start/PhasePanel';
@@ -48,7 +50,21 @@ const TARGET_COLOR: Record<string, number> = {
   anaerobic: 0xe74c3c,
   mixed: 0x9b59b6,
   strength: 0xd9b06a,
+  custom: 0xb08bd9,
 };
+
+/** El catálogo más la salida que el rider diseñó, si la hay. */
+function catalogWithCustom(blocks: readonly Block[] | undefined): CatalogEntry[] {
+  if (!blocks || blocks.length === 0) return [...PROGRAM_CATALOG];
+  return [
+    ...PROGRAM_CATALOG,
+    {
+      program: blocksToProgram(blocks),
+      description: 'Tu salida, diseñada por ti y aprobada por el rider modelo.',
+      adjustments: [],
+    },
+  ];
+}
 
 /** La salida mínima de los días malos: tres de calor y siete suaves. Cuenta para la semana. */
 const MINIMAL_RIDE = { warmupMin: 3, mainMin: 7 } as const;
@@ -79,10 +95,11 @@ interface StoredConfig {
   values: Record<string, Record<string, number>>;
 }
 
-/** Nombre corto para los chips: con ocho programas, "Primera salida" y "Recuperación" no caben. */
+/** Nombre corto para los chips: con nueve programas, "Primera salida" y "Recuperación" no caben. */
 const CHIP_LABEL: Record<string, string> = {
   'primera-salida': 'Primera',
   recuperacion: 'Recup.',
+  empujones: 'Empuj.',
 };
 
 function chipLabel(entry: CatalogEntry): string {
@@ -99,6 +116,7 @@ export class StartScene extends Phaser.Scene {
   private selectedIndex = 0;
   private recommendedIndex = 0;
   private recommendation!: Recommendation;
+  private catalog: CatalogEntry[] = [...PROGRAM_CATALOG];
   private stored!: StoredConfig;
   private atmosphere!: Atmosphere;
   private campfire!: Campfire;
@@ -115,6 +133,7 @@ export class StartScene extends Phaser.Scene {
   private adjustObjects: Phaser.GameObjects.GameObject[] = [];
   private statusText!: Phaser.GameObjects.Text;
   private nextRideText!: Phaser.GameObjects.Text;
+  private otherLabel: Phaser.GameObjects.Text | undefined;
   private profilePanel: ProfilePanel | undefined;
   /** Cribado o revisión abiertos: el campamento espera. */
   private overlayOpen = false;
@@ -134,6 +153,7 @@ export class StartScene extends Phaser.Scene {
     const stored = this.registry.get('trainingConfig') as StoredConfig | undefined;
     this.stored = stored ?? { programId: 'primera-salida', values: {} };
     this.chips = [];
+    this.otherLabel = undefined;
     this.adjustObjects = [];
 
     this.add.text(LEFT_X, 30, 'CADENCIA CERO', {
@@ -166,7 +186,9 @@ export class StartScene extends Phaser.Scene {
 
     this.progress = new ProgressPanel(this, LEFT_X, 108, LEFT_W);
     this.buildCard();
-    PROGRAM_CATALOG.forEach((entry, i) => this.buildChip(entry, i));
+    this.catalog = catalogWithCustom(loadPlanState().customBlocks);
+    this.rebuildChips();
+    makeTextButton(this, 604, 54, 120, 42, 'Diseñar', () => this.openBuilder(), 10, 17);
 
     const startButton = this.add
       .rectangle(1074, 650, 300, 84, 0x1e8449)
@@ -225,6 +247,36 @@ export class StartScene extends Phaser.Scene {
     new MarksPanel(this, this.history(), () => {
       this.overlayOpen = false;
     });
+  }
+
+  /** El editor de salidas: al guardar, la salida "Mía" entra en los chips. */
+  private openBuilder(): void {
+    if (this.overlayOpen || this.profilePanel) return;
+    this.overlayOpen = true;
+    new BuilderPanel(this, {
+      initial: loadPlanState().customBlocks,
+      onSave: (blocks) => {
+        savePlanState({ customBlocks: blocks });
+        this.catalog = catalogWithCustom(blocks);
+        this.rebuildChips();
+        this.overlayOpen = false;
+        this.refreshFromHistory();
+        this.select(this.catalog.length - 1);
+      },
+      onClose: () => {
+        this.overlayOpen = false;
+      },
+    });
+  }
+
+  private rebuildChips(): void {
+    for (const chip of this.chips) {
+      chip.rect.destroy();
+      chip.label.destroy();
+      chip.stripe.destroy();
+    }
+    this.chips = [];
+    this.catalog.forEach((entry, i) => this.buildChip(entry, i));
   }
 
   /**
@@ -305,11 +357,11 @@ export class StartScene extends Phaser.Scene {
     const next = nextRideStatus(loadPlanState().nextRideDayMs, nowMs);
     this.nextRideText.setText(next.label);
     this.nextRideText.setColor(next.state === 'today' ? UI.good : next.state === 'missed' ? UI.textMuted : UI.info);
-    const index = PROGRAM_CATALOG.findIndex((e) => e.program.id === this.recommendation.programId);
+    const index = this.catalog.findIndex((e) => e.program.id === this.recommendation.programId);
     this.recommendedIndex = index >= 0 ? index : 0;
     // Los chips que el plan aún reserva se atenúan; siguen siendo elegibles.
     this.chips.forEach((chip, i) => {
-      const entry = PROGRAM_CATALOG[i];
+      const entry = this.catalog[i];
       const gated = entry !== undefined && programGate(entry.program.id, sessions, nowMs) !== undefined;
       chip.stripe.setAlpha(gated ? 0.35 : 1);
       chip.label.setAlpha(gated ? 0.55 : 1);
@@ -383,7 +435,7 @@ export class StartScene extends Phaser.Scene {
   }
 
   private buildChip(entry: CatalogEntry, index: number): void {
-    const n = PROGRAM_CATALOG.length;
+    const n = this.catalog.length;
     const w = Math.floor((RIGHT_W - CHIP_GAP * (n - 1)) / n);
     const x = RIGHT_X + index * (w + CHIP_GAP);
     const rect = this.add
@@ -408,15 +460,15 @@ export class StartScene extends Phaser.Scene {
       if (this.selectedIndex !== index) rect.setFillStyle(CARD_BG);
     });
     this.chips.push({ rect, label, stripe });
-    if (index === 0) {
-      this.add
+    if (index === 0 && !this.otherLabel) {
+      this.otherLabel = this.add
         .text(RIGHT_X, CHIPS_Y - 24, 'OTRA SALIDA', { fontFamily: FONT_SANS, fontSize: '13px', color: UI.textDim })
         .setLetterSpacing(2);
     }
   }
 
   private select(index: number): void {
-    const entry = PROGRAM_CATALOG[index];
+    const entry = this.catalog[index];
     if (!entry) return;
     this.selectedIndex = index;
     this.stored.programId = entry.program.id;
@@ -505,7 +557,7 @@ export class StartScene extends Phaser.Scene {
 
   private startRide(): void {
     if (this.profilePanel || this.overlayOpen) return; // un panel abierto: el dim se traga el toque
-    const entry = PROGRAM_CATALOG[this.selectedIndex];
+    const entry = this.catalog[this.selectedIndex];
     if (!entry) return;
     this.launch(this.adjustedProgram(entry));
   }

@@ -6,15 +6,9 @@ import { talkTestCue, zoneLabel, zoneOf } from '../../sim/zones';
 import { formatMMSS } from '../format';
 import { FONT_MONO, FONT_SANS, KIND_COLOR, UI, ZONE_COLOR } from '../theme';
 import { makeTextButton, type TapButton } from '../uiButton';
+import { KIND_ES } from './KindNames';
 
-export const KIND_ES: Record<string, string> = {
-  warmup: 'Calentamiento',
-  surge: 'Oleada',
-  recover: 'Recuperación',
-  steady: 'Ritmo',
-  cooldown: 'Vuelta a la calma',
-  push: 'Empujón',
-};
+export { KIND_ES };
 
 const HEALTH_W = 256;
 const ZONE_X = 24;

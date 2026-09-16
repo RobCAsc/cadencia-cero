@@ -1,7 +1,9 @@
+import type { Block } from '../sim/programRules';
+
 // Lo que el plan recuerda entre sesiones y no es una salida: el cribado de
-// salud, el día comprometido para la próxima salida, cuándo se hizo la
-// última revisión semanal y cuándo se mostró el aviso de seguridad. Un solo
-// usuario, una tablet: localStorage, como el perfil.
+// salud, el porqué, el día comprometido para la próxima salida, cuándo se
+// hizo la última revisión semanal y cuándo se mostró el aviso de seguridad,
+// la salida diseñada. Un solo usuario, una tablet: localStorage, como el perfil.
 
 const KEY = 'cadencia-cero.plan';
 
@@ -33,6 +35,8 @@ export interface PlanState {
   ghostMode?: 'last' | 'best';
   /** Nombres que el rider puso a los refugios, por índice. */
   refugeNames?: Record<number, string>;
+  /** La salida que el rider diseñó ("Mía"), como bloques del editor. */
+  customBlocks?: Block[];
 }
 
 export function loadPlanState(): PlanState {
