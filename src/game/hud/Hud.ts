@@ -314,7 +314,9 @@ export class Hud {
         color = UI.good;
       }
     }
-    this.zoneCaption.setText(`Vas en ${mine} · el tramo pide ${zoneLabel(zoneMin, zoneMax)}${verdict}`);
+    // La racha en zona: feedback inmediato de precisión, a partir de medio minuto.
+    const run = state.inZoneRunSec >= 30 ? ` · ${formatMMSS(state.inZoneRunSec)} seguidos en zona` : '';
+    this.zoneCaption.setText(`Vas en ${mine} · el tramo pide ${zoneLabel(zoneMin, zoneMax)}${verdict}${run}`);
     this.zoneCaption.setColor(color);
     this.zoneCaption.setY(ZONE_Y + ZONE_H + 12);
   }

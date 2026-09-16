@@ -16,6 +16,7 @@ const summary: RideSummary = {
   aboveZoneSec: 60,
   recoveryDrops: [18, 21],
   gapTrace: [50, 58, 66],
+  bestInZoneRunSec: 400,
 };
 
 describe('toSessionRecord', () => {
@@ -51,8 +52,11 @@ describe('toSessionRecord', () => {
       summary,
       hrRestBpm: 60,
       rpe: 'hard',
+      note: 'cansado',
     });
     expect(record.rpe).toBe('hard');
+    expect(record.note).toBe('cansado');
+    expect(record.bestInZoneRunSec).toBe(400);
     expect(record.inputMode).toBe('feel');
   });
 

@@ -23,6 +23,16 @@ export interface PlanState {
   safetyNoteWeekMs?: number;
   /** El modo elegido tras el cribado, si el rider no puede fiarse del pulso. */
   inputMode?: 'heartRate' | 'feel';
+  /** Por qué pedalea, en sus palabras. Aparece en el ritual y en la revisión. */
+  why?: string;
+  /** Última fase del plan celebrada: la ceremonia se muestra una vez por ascenso. */
+  lastPhaseSeen?: 'arranque' | 'base' | 'rotacion' | 'descarga';
+  /** Última temporada con informe mostrado. */
+  lastSeasonReported?: number;
+  /** Contra quién corre el fantasma: la última vez o la mejor. */
+  ghostMode?: 'last' | 'best';
+  /** Nombres que el rider puso a los refugios, por índice. */
+  refugeNames?: Record<number, string>;
 }
 
 export function loadPlanState(): PlanState {

@@ -10,6 +10,7 @@ import {
   INTENSITY_MIN,
   reserveWarning,
   STEP_TEST_FROM_RIDES,
+  stepProgress,
   stepTestDue,
   toSimRider,
   withAge,
@@ -21,6 +22,8 @@ import {
   zoneWidthBpm,
   type StoredRiderProfile,
 } from '../../sim/riderProfile';
+import { exportBackup, importBackup, pickFile } from '../../storage/exportImport';
+import { loadPlanState, savePlanState } from '../../storage/planStore';
 import { saveRiderProfile } from '../../storage/riderStore';
 import { formatMMSS } from '../format';
 import { FONT_MONO, FONT_SANS, UI } from '../theme';
@@ -28,7 +31,7 @@ import { makeTapButton, makeTextButton } from '../uiButton';
 
 const DEPTH = 50;
 const PANEL_W = 900;
-const PANEL_H = 620;
+const PANEL_H = 664;
 const LABEL_X = 230;
 const VALUE_X = 620;
 const MINUS_X = 540;
@@ -95,6 +98,8 @@ export class ProfilePanel {
   private stepButton!: ReturnType<typeof makeTextButton>;
   private intensityText!: Phaser.GameObjects.Text;
   private testText!: Phaser.GameObjects.Text;
+  private ghostButton!: ReturnType<typeof makeTextButton>;
+  private dataText!: Phaser.GameObjects.Text;
 
   private active: StepTest | undefined;
   private unsubscribeSamples: (() => void) | undefined;
@@ -174,10 +179,23 @@ export class ProfilePanel {
     // Aviso de reserva estrecha: las zonas son el 10 % de la reserva, y con
     // pocos latidos por zona la salida es perseguir un número.
     this.reserveText = this.scene.add
-      .text(cx, this.rowY(5) + 40, '', { fontFamily: FONT_SANS, fontSize: '15px', color: UI.warn, align: 'center', wordWrap: { width: PANEL_W - 80 } })
+      .text(cx, this.rowY(5) + 34, '', { fontFamily: FONT_SANS, fontSize: '15px', color: UI.warn, align: 'center', wordWrap: { width: PANEL_W - 80 } })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
     this.objects.push(this.reserveText);
+
+    // Fila 6: tus datos. El historial es del rider: se lo lleva, lo restaura,
+    // y elige contra qué fantasma corre.
+    this.label(6, 'Tus datos');
+    const dataY = this.rowY(6);
+    const exportButton = makeTextButton(this.scene, 600, dataY, 150, 44, 'Exportar', () => void this.exportData(), DEPTH + 1, 17);
+    const importButton = makeTextButton(this.scene, 760, dataY, 150, 44, 'Importar', () => void this.importData(), DEPTH + 1, 17);
+    this.ghostButton = makeTextButton(this.scene, 940, dataY, 190, 44, '', () => this.toggleGhost(), DEPTH + 1, 15);
+    this.dataText = this.scene.add
+      .text(cx, dataY + 32, '', { fontFamily: FONT_SANS, fontSize: '13px', color: UI.textDim, align: 'center' })
+      .setOrigin(0.5)
+      .setDepth(DEPTH + 1);
+    this.objects.push(exportButton.rect, exportButton.label, importButton.rect, importButton.label, this.ghostButton.rect, this.ghostButton.label, this.dataText);
 
     // Fila 4: escalera
     this.label(4, 'Escalera');
@@ -196,10 +214,10 @@ export class ProfilePanel {
 
     // Pie: estado de la prueba en curso y cerrar
     this.testText = this.scene.add
-      .text(cx, this.rowY(6) + 24, '', { fontFamily: FONT_SANS, fontSize: '19px', color: UI.info, align: 'center' })
+      .text(cx, this.rowY(7) + 6, '', { fontFamily: FONT_SANS, fontSize: '17px', color: UI.info, align: 'center', wordWrap: { width: PANEL_W - 60 } })
       .setOrigin(0.5)
       .setDepth(DEPTH + 1);
-    const close = makeTextButton(this.scene, cx, RENDER.height - 76, 220, 56, 'Cerrar', () => this.close(), DEPTH + 1, 24);
+    const close = makeTextButton(this.scene, cx, RENDER.height - 54, 220, 52, 'Cerrar', () => this.close(), DEPTH + 1, 24);
     this.objects.push(this.testText, close.rect, close.label);
   }
 
@@ -277,6 +295,16 @@ export class ProfilePanel {
     const rides = this.ridesCount();
     const due = stepTestDue(p, Date.now());
     const locked = rides < STEP_TEST_FROM_RIDES;
+    // La escalera como examen: al mismo esfuerzo cómodo, ¿va el pulso más bajo que la vez anterior?
+    const exam = stepProgress(p);
+    const examNote =
+      exam !== undefined
+        ? exam.easyDeltaBpm <= -2
+          ? `examen: al mismo esfuerzo cómodo vas ${-exam.easyDeltaBpm} latidos más bajo que hace ${exam.days} días ✓`
+          : exam.easyDeltaBpm >= 2
+            ? `examen: al esfuerzo cómodo vas ${exam.easyDeltaBpm} latidos más alto que hace ${exam.days} días`
+            : `examen: igual que hace ${exam.days} días`
+        : undefined;
     this.stepNoteText.setText(
       locked
         ? `a partir de la salida ${STEP_TEST_FROM_RIDES} (llevas ${rides})`
@@ -284,12 +312,11 @@ export class ProfilePanel {
           ? 'toca repetirla: hace más de seis semanas'
           : due === 'restDropped'
             ? 'toca repetirla: tu reposo bajó'
-            : due === 'never'
-              ? 'dos anclas del habla afinan el máximo'
-              : '',
+            : (examNote ?? (due === 'never' ? 'dos anclas del habla afinan el máximo' : '')),
     );
-    this.stepNoteText.setColor(due === 'stale' || due === 'restDropped' ? UI.warn : UI.textDim);
+    this.stepNoteText.setColor(due === 'stale' || due === 'restDropped' ? UI.warn : examNote && exam && exam.easyDeltaBpm <= -2 ? UI.good : UI.textDim);
     if (!this.active) this.stepButton.rect.setAlpha(locked ? 0.45 : 1);
+    this.ghostButton.label.setText(`Fantasma: ${loadPlanState().ghostMode === 'best' ? 'tu mejor vez' : 'la última vez'}`);
 
     const sign = p.intensityPct > 0 ? '+' : '';
     this.intensityText.setText(`${sign}${p.intensityPct} %`);
@@ -325,8 +352,55 @@ export class ProfilePanel {
   // ---- la escalera ---------------------------------------------------------
 
   private ridesCount(): number {
-    const history = (this.scene.registry.get('sessionHistory') as SessionRecord[] | undefined) ?? [];
-    return history.filter(isCountable).length;
+    return this.history().filter(isCountable).length;
+  }
+
+  private history(): SessionRecord[] {
+    return (this.scene.registry.get('sessionHistory') as SessionRecord[] | undefined) ?? [];
+  }
+
+  // ---- tus datos -----------------------------------------------------------
+
+  private toggleGhost(): void {
+    const next = loadPlanState().ghostMode === 'best' ? 'last' : 'best';
+    savePlanState({ ghostMode: next });
+    this.render();
+  }
+
+  private async exportData(): Promise<void> {
+    const outcome = await exportBackup(this.history());
+    this.dataText.setText(
+      outcome === 'shared'
+        ? 'Copia compartida.'
+        : outcome === 'downloaded'
+          ? 'Copia descargada: sesiones, perfil y plan en un archivo.'
+          : 'No se pudo exportar en este navegador.',
+    );
+  }
+
+  private async importData(): Promise<void> {
+    const text = await pickFile();
+    if (!text) return;
+    try {
+      const result = await importBackup(text, this.history());
+      this.scene.registry.set('sessionHistory', result.sessions);
+      this.profile = result.profile;
+      this.scene.registry.set('riderProfileStored', result.profile);
+      this.scene.registry.set('riderProfile', toSimRider(result.profile));
+      this.onChange(result.profile);
+      this.render();
+      this.dataText.setText(`Copia importada: ${result.added} salidas nuevas, perfil y plan restaurados.`);
+    } catch (err) {
+      this.dataText.setText(err instanceof Error ? err.message : 'No se pudo leer el archivo.');
+    }
+  }
+
+  private examLine(): string {
+    const exam = stepProgress(this.profile);
+    if (!exam) return '';
+    if (exam.easyDeltaBpm <= -2) return ` Examen: al mismo esfuerzo cómodo vas ${-exam.easyDeltaBpm} latidos más bajo que hace ${exam.days} días. Eso es forma.`;
+    if (exam.easyDeltaBpm >= 2) return ` Al esfuerzo cómodo vas ${exam.easyDeltaBpm} latidos más alto que hace ${exam.days} días: un día flojo, o toca aflojar.`;
+    return ` Igual que hace ${exam.days} días.`;
   }
 
   private toggleTest(): void {
@@ -375,7 +449,7 @@ export class ProfilePanel {
     }
     this.setProfile(withStepTest(this.profile, result.easyBpm, result.hardBpm, Date.now()));
     this.testText.setText(
-      `Escalera: cómodo ${result.easyBpm} · fuerte ${result.hardBpm} → máximo ${this.profile.hrMaxBpm} bpm (${MAX_SOURCE_ES[this.profile.hrMaxSource]}).`,
+      `Escalera: cómodo ${result.easyBpm} · fuerte ${result.hardBpm} → máximo ${this.profile.hrMaxBpm} bpm (${MAX_SOURCE_ES[this.profile.hrMaxSource]}).${this.examLine()}`,
     );
     this.testText.setColor(UI.good);
   }

@@ -28,6 +28,16 @@ export interface StoredRiderProfile {
   /** Cuándo se hizo la última escalera y con qué reposo: para saber cuándo repetirla. */
   stepTestAtMs?: number;
   stepTestRestBpm?: number;
+  /** Todas las escaleras hechas: la comparación entre ellas es el examen de forma. */
+  stepHistory?: StepEntry[];
+}
+
+export interface StepEntry {
+  atMs: number;
+  restBpm: number;
+  easyBpm: number;
+  hardBpm: number;
+  maxBpm: number;
 }
 
 /** El ritmo cómodo (media hora hablando) como ancla única: perfiles viejos. */
@@ -203,11 +213,42 @@ export function withStepTest(
     ...(nowMs !== undefined ? { stepTestAtMs: nowMs } : {}),
   };
   if (p.hrMaxSource === 'observed' && p.hrMaxBpm > derived) {
-    return ensureRange(next);
+    return withStepEntry(ensureRange(next), nowMs);
   }
   next.hrMaxBpm = derived;
   next.hrMaxSource = 'step';
-  return ensureRange(next);
+  return withStepEntry(ensureRange(next), nowMs);
+}
+
+function withStepEntry(p: StoredRiderProfile, nowMs: number | undefined): StoredRiderProfile {
+  if (nowMs === undefined || p.anchorBpm === undefined || p.hardBpm === undefined) return p;
+  const entry: StepEntry = { atMs: nowMs, restBpm: p.hrRestBpm, easyBpm: p.anchorBpm, hardBpm: p.hardBpm, maxBpm: p.hrMaxBpm };
+  return { ...p, stepHistory: [...(p.stepHistory ?? []), entry] };
+}
+
+export interface StepProgressReport {
+  /** Latidos que bajó (negativo) o subió el ancla cómoda respecto a la escalera anterior. */
+  easyDeltaBpm: number;
+  hardDeltaBpm: number;
+  /** Días entre las dos escaleras. */
+  days: number;
+}
+
+/**
+ * La escalera como examen: al mismo esfuerzo cómodo (hablas frases enteras),
+ * ¿va el pulso más bajo que la vez anterior? Es la mejora de forma más
+ * honesta que el pulso puede certificar. undefined con menos de dos escaleras.
+ */
+export function stepProgress(p: StoredRiderProfile): StepProgressReport | undefined {
+  const history = p.stepHistory ?? [];
+  const last = history[history.length - 1];
+  const prev = history[history.length - 2];
+  if (!last || !prev) return undefined;
+  return {
+    easyDeltaBpm: last.easyBpm - prev.easyBpm,
+    hardDeltaBpm: last.hardBpm - prev.hardBpm,
+    days: Math.round((last.atMs - prev.atMs) / 86_400_000),
+  };
 }
 
 export type StepTestDue = 'never' | 'stale' | 'restDropped' | 'fresh';

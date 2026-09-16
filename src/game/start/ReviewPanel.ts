@@ -2,22 +2,31 @@ import Phaser from 'phaser';
 import { RENDER } from '../../config';
 import { PROGRAM_CATALOG } from '../../sim/programs/catalog';
 import { PHASE_ES, type WeeklyReview } from '../../sim/progress';
+import { shareWeek } from '../share';
 import { FONT_MONO, FONT_SANS, UI } from '../theme';
 import { makeTextButton } from '../uiButton';
 
 // La revisión semanal: una pantalla la primera vez que se abre la app cada
-// semana. La semana pasada contra la anterior, la racha, el reposo, y el plan
-// de la que empieza. Sin gráficos: cuatro números y una frase.
+// semana. La semana pasada contra la anterior, la racha, el reposo, lo que el
+// rider anotó, y el plan de la que empieza. Sin gráficos: cuatro números y
+// una frase. Se puede compartir como imagen.
 
 const DEPTH = 55;
 const PANEL_W = 820;
-const PANEL_H = 520;
+const PANEL_H = 560;
 const GOLD = '#d9b06a';
+
+export interface ReviewPanelOptions {
+  review: WeeklyReview;
+  why?: string;
+  onClose: () => void;
+}
 
 export class ReviewPanel {
   private readonly objects: Phaser.GameObjects.GameObject[] = [];
 
-  constructor(scene: Phaser.Scene, review: WeeklyReview, onClose: () => void) {
+  constructor(scene: Phaser.Scene, opts: ReviewPanelOptions) {
+    const { review, onClose } = opts;
     const cx = RENDER.width / 2;
     const cy = RENDER.height / 2;
     const top = cy - PANEL_H / 2;
@@ -63,14 +72,26 @@ export class ReviewPanel {
         : review.streak === 1
           ? 'Racha: 1 semana. Cumple esta y ya son dos.'
           : 'Sin racha ahora mismo. Esta semana la arranca.';
-    text(left, top + 340, streakLine, 18, review.streak >= 2 ? GOLD : UI.textMuted);
+    text(left, top + 336, streakLine, 18, review.streak >= 2 ? GOLD : UI.textMuted);
+    if (review.notes.length > 0) {
+      const words = review.notes.map((n) => (n.times > 1 ? `${n.note} ×${n.times}` : n.note)).join(' · ');
+      text(left, top + 362, `Tu diario: ${words}`, 15, UI.textMuted, { wordWrap: { width: PANEL_W - 100 } });
+    }
+    if (opts.why) text(left, top + 386, `«${opts.why}»`, 15, GOLD, { wordWrap: { width: PANEL_W - 100 } });
 
     const program = PROGRAM_CATALOG.find((e) => e.program.id === review.plan.programId)?.program.name ?? review.plan.programId;
-    text(left, top + 376, `Esta semana: fase ${PHASE_ES[review.plan.phase].toLowerCase()}. Primera salida: ${program}.`, 18, UI.info, { wordWrap: { width: PANEL_W - 100 } });
-    text(left, top + 404, review.plan.reason, 15, UI.textDim, { wordWrap: { width: PANEL_W - 100 } });
+    text(left, top + 418, `Esta semana: fase ${PHASE_ES[review.plan.phase].toLowerCase()}. Primera salida: ${program}.`, 18, UI.info, { wordWrap: { width: PANEL_W - 100 } });
+    text(left, top + 446, review.plan.reason, 15, UI.textDim, { wordWrap: { width: PANEL_W - 100 } });
 
-    const close = makeTextButton(scene, cx, top + PANEL_H - 50, 260, 56, 'Al campamento', () => this.close(onClose), DEPTH + 1, 22);
-    this.objects.push(close.rect, close.label);
+    const shareButton = makeTextButton(scene, cx - 150, top + PANEL_H - 50, 220, 56, 'Compartir', () => void this.share(opts, shareButton.label), DEPTH + 1, 20);
+    const close = makeTextButton(scene, cx + 130, top + PANEL_H - 50, 260, 56, 'Al campamento', () => this.close(onClose), DEPTH + 1, 22);
+    this.objects.push(shareButton.rect, shareButton.label, close.rect, close.label);
+  }
+
+  private async share(opts: ReviewPanelOptions, label: Phaser.GameObjects.Text): Promise<void> {
+    const outcome = await shareWeek(opts.review, opts.why);
+    if (!label.active) return;
+    label.setText(outcome === 'shared' ? 'Compartida' : outcome === 'opened' ? 'Imagen abierta' : 'No disponible');
   }
 
   private close(onClose: () => void): void {

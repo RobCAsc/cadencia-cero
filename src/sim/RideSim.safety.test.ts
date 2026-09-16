@@ -191,6 +191,19 @@ describe('modo por sensación', () => {
   });
 });
 
+describe('la racha en zona', () => {
+  it('cuenta los segundos seguidos dentro de la zona y guarda la mejor racha', () => {
+    const sim = make(fondo());
+    beatFor(sim, 60, 115); // calor Z0-Z1: 55 % → en zona
+    expect(sim.state.inZoneRunSec).toBeCloseTo(60, 0);
+    beatFor(sim, 20, 130); // steady Z2 pide 60-70 %: 70 % es techo → fuera
+    expect(sim.state.inZoneRunSec).toBe(0);
+    beatFor(sim, 30, 125); // 65 %: dentro
+    expect(sim.state.inZoneRunSec).toBeCloseTo(30, 0);
+    expect(sim.summary().bestInZoneRunSec).toBeCloseTo(60, 0);
+  });
+});
+
 describe('la ventaja deja rastro', () => {
   it('muestrea la ventaja cada gapTraceStepSec para el fantasma', () => {
     const sim = make(fondo(), { gapTraceStepSec: 5 });

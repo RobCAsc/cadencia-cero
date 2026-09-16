@@ -24,6 +24,8 @@ export interface CalmPanelOptions {
   history: readonly SessionRecord[];
   /** El aviso de seguridad, si toca esta semana. */
   safetyNote?: string;
+  /** Por qué pedalea, en sus palabras: se muestra cuando no toca el aviso. */
+  why?: string;
   /** Arrancar la salida (con el reposo medido, o sin él si se saltó). */
   onStart: (restBpm: number | undefined) => void;
   /** Cambiar la salida de hoy por una suave (solo se ofrece si el reposo viene alto). */
@@ -114,10 +116,18 @@ export class CalmPanel {
     this.objects.push(dim, panel, title, subtitle, this.countdown, this.bpmText, this.bar, this.hint, this.verdictText);
     for (const b of [this.skipButton, this.startButton, this.easierButton, this.restButton]) this.objects.push(b.rect, b.label);
 
-    // El aviso de seguridad, una vez por semana, donde el rider ya está quieto y leyendo.
-    if (opts.safetyNote) {
+    // El aviso de seguridad, una vez por semana, donde el rider ya está quieto
+    // y leyendo; el resto de días, su porqué.
+    const line = opts.safetyNote ?? (opts.why ? `«${opts.why}»` : undefined);
+    if (line) {
       const note = scene.add
-        .text(cx, top + PANEL_H - 84, opts.safetyNote, { fontFamily: FONT_SANS, fontSize: '13px', color: UI.textDim, align: 'center', wordWrap: { width: PANEL_W - 60 } })
+        .text(cx, top + PANEL_H - 84, line, {
+          fontFamily: FONT_SANS,
+          fontSize: opts.safetyNote ? '13px' : '16px',
+          color: opts.safetyNote ? UI.textDim : '#d9b06a',
+          align: 'center',
+          wordWrap: { width: PANEL_W - 60 },
+        })
         .setOrigin(0.5)
         .setDepth(DEPTH + 1);
       this.objects.push(note);

@@ -69,6 +69,8 @@ export interface SimState {
   eased: boolean;
   /** Se puede insertar el empujón opcional ahora (tramo continuo, aún no usado). */
   pushAvailable: boolean;
+  /** Segundos seguidos dentro de la zona prescrita: feedback inmediato de precisión. */
+  inZoneRunSec: number;
   playerSpeedKph: number;
   /** Velocidad efectiva de la horda (con rampa y tropiezo aplicados). */
   zombieSpeedKph: number;
@@ -104,6 +106,8 @@ export interface RideSummary {
   recoveryDrops: readonly number[];
   /** Ventaja (m) cada gapTraceStepSec: con ella la próxima vez corre tu fantasma. */
   gapTrace: readonly number[];
+  /** Mejor racha de segundos seguidos dentro de la zona prescrita. */
+  bestInZoneRunSec: number;
 }
 
 export type SimEvent =

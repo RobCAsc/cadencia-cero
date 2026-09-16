@@ -10,10 +10,15 @@ import {
 import {
   nextRideStatus,
   PHASE_ES,
+  planPhase,
+  programGate,
   recommendToday,
+  seasonReport,
+  seasonReportDue,
   weeklyReview,
   weeklyReviewDue,
   weekStartMs,
+  type PlanPhase,
   type Recommendation,
 } from '../../sim/progress';
 import { reserveWarning, stepTestDue, zoneWidthBpm, type StoredRiderProfile } from '../../sim/riderProfile';
@@ -22,11 +27,14 @@ import { Atmosphere } from '../atmosphere';
 import { gameAudio } from '../audio';
 import { formatMMSS } from '../format';
 import { Campfire } from '../start/Campfire';
+import { MarksPanel } from '../start/MarksPanel';
+import { hasCeremony, PhasePanel } from '../start/PhasePanel';
 import { ProfilePanel } from '../start/ProfilePanel';
 import { ProfilePreview } from '../start/ProfilePreview';
 import { ProgressPanel } from '../start/ProgressPanel';
 import { ReviewPanel } from '../start/ReviewPanel';
 import { ScreeningPanel } from '../start/ScreeningPanel';
+import { SeasonPanel } from '../start/SeasonPanel';
 import { FONT_MONO, FONT_SANS, UI } from '../theme';
 import { makeTapButton, makeTextButton } from '../uiButton';
 import { acquireWakeLock } from '../wakeLock';
@@ -144,6 +152,7 @@ export class StartScene extends Phaser.Scene {
     // Al lado, el cribado de salud, que se puede volver a contestar.
     makeTextButton(this, 1124, 54, 200, 42, 'Perfil y pulsera', () => this.openProfile(), 10, 18);
     makeTextButton(this, 904, 54, 200, 42, 'Antes de entrenar', () => this.openScreening(), 10, 17);
+    makeTextButton(this, 744, 54, 120, 42, 'Marcas', () => this.openMarks(), 10, 17);
     this.statusText = this.add.text(LEFT_X, 686, '', {
       fontFamily: FONT_SANS,
       fontSize: '15px',
@@ -192,15 +201,16 @@ export class StartScene extends Phaser.Scene {
     else this.maybeReview();
   }
 
-  /** El cribado de salud: cuatro preguntas, y el modo por sensación si hace falta. */
+  /** El cribado de salud: cuatro preguntas, el porqué, y el modo por sensación si hace falta. */
   private openScreening(): void {
     if (this.overlayOpen || this.profilePanel) return;
     this.overlayOpen = true;
     const plan = loadPlanState();
     new ScreeningPanel(this, {
       flags: plan.screening?.flags,
-      onDone: (flags, mode) => {
-        savePlanState({ screening: { answeredAtMs: Date.now(), flags }, inputMode: mode });
+      why: plan.why,
+      onDone: (flags, mode, why) => {
+        savePlanState({ screening: { answeredAtMs: Date.now(), flags }, inputMode: mode, why });
         this.registry.set('inputMode', mode);
         this.overlayOpen = false;
         this.renderStatus();
@@ -209,21 +219,70 @@ export class StartScene extends Phaser.Scene {
     });
   }
 
-  /** La revisión semanal, la primera vez que se abre la app en una semana nueva. */
+  private openMarks(): void {
+    if (this.overlayOpen || this.profilePanel) return;
+    this.overlayOpen = true;
+    new MarksPanel(this, this.history(), () => {
+      this.overlayOpen = false;
+    });
+  }
+
+  /**
+   * Los paneles de apertura, en orden y de uno en uno: la revisión semanal,
+   * el informe de temporada si se cerró una, y la ceremonia si se subió de
+   * fase. Cada uno vuelve a llamar aquí al cerrarse.
+   */
   private maybeReview(): void {
-    if (this.overlayOpen || this.reviewChecked) return;
+    if (this.overlayOpen) return;
     const sessions = this.history();
     if (sessions.length === 0) return; // el historial puede no haber llegado aún
     const nowMs = Date.now();
     const plan: PlanState = loadPlanState();
     if (!plan.screening) return; // primero el cribado; su cierre vuelve a llamar aquí
-    if (!weeklyReviewDue(sessions, plan.lastReviewWeekMs, nowMs)) return;
+
+    if (!this.reviewChecked && weeklyReviewDue(sessions, plan.lastReviewWeekMs, nowMs)) {
+      this.reviewChecked = true;
+      this.overlayOpen = true;
+      new ReviewPanel(this, {
+        review: weeklyReview(sessions, nowMs),
+        why: plan.why,
+        onClose: () => {
+          savePlanState({ lastReviewWeekMs: weekStartMs(nowMs) });
+          this.overlayOpen = false;
+          this.maybeReview();
+        },
+      });
+      return;
+    }
     this.reviewChecked = true;
-    this.overlayOpen = true;
-    new ReviewPanel(this, weeklyReview(sessions, nowMs), () => {
-      savePlanState({ lastReviewWeekMs: weekStartMs(nowMs) });
-      this.overlayOpen = false;
-    });
+
+    const closedSeason = seasonReportDue(sessions, plan.lastSeasonReported, nowMs);
+    if (closedSeason !== undefined) {
+      this.overlayOpen = true;
+      new SeasonPanel(this, seasonReport(sessions, closedSeason), () => {
+        savePlanState({ lastSeasonReported: closedSeason });
+        this.overlayOpen = false;
+        this.maybeReview();
+      });
+      return;
+    }
+
+    // La ceremonia de fase: solo al subir, y una vez. La primera vez que se
+    // conoce la fase no se celebra nada: se anota.
+    const order: PlanPhase[] = ['arranque', 'base', 'rotacion'];
+    const current = planPhase(sessions, nowMs).phase;
+    const seen = plan.lastPhaseSeen;
+    if (seen === undefined) {
+      savePlanState({ lastPhaseSeen: current });
+    } else if (current !== 'descarga' && order.indexOf(current) > order.indexOf(seen) && hasCeremony(current)) {
+      this.overlayOpen = true;
+      new PhasePanel(this, current, () => {
+        savePlanState({ lastPhaseSeen: current });
+        this.overlayOpen = false;
+      });
+    } else if (current !== 'descarga' && current !== seen) {
+      savePlanState({ lastPhaseSeen: current });
+    }
   }
 
   update(_time: number, deltaMs: number): void {
@@ -248,6 +307,13 @@ export class StartScene extends Phaser.Scene {
     this.nextRideText.setColor(next.state === 'today' ? UI.good : next.state === 'missed' ? UI.textMuted : UI.info);
     const index = PROGRAM_CATALOG.findIndex((e) => e.program.id === this.recommendation.programId);
     this.recommendedIndex = index >= 0 ? index : 0;
+    // Los chips que el plan aún reserva se atenúan; siguen siendo elegibles.
+    this.chips.forEach((chip, i) => {
+      const entry = PROGRAM_CATALOG[i];
+      const gated = entry !== undefined && programGate(entry.program.id, sessions, nowMs) !== undefined;
+      chip.stripe.setAlpha(gated ? 0.35 : 1);
+      chip.label.setAlpha(gated ? 0.55 : 1);
+    });
     // Los ajustes sugeridos solo rellenan huecos: lo que el rider tocó, se respeta.
     const values = (this.stored.values[this.recommendation.programId] ??= {});
     for (const [id, value] of Object.entries(this.recommendation.values)) {
@@ -372,8 +438,10 @@ export class StartScene extends Phaser.Scene {
     );
     this.cardStripe.setFillStyle(TARGET_COLOR[entry.program.target] ?? 0x7f8c8d);
     this.cardName.setText(entry.program.name);
-    this.cardReason.setText(recommended ? this.recommendation.reason : entry.description);
-    this.cardReason.setColor(recommended ? UI.info : UI.textMuted);
+    // La puerta del plan, si la hay: información, no prohibición.
+    const gate = programGate(entry.program.id, this.history(), Date.now());
+    this.cardReason.setText(recommended ? this.recommendation.reason : gate ? `${entry.description}\n${gate}` : entry.description);
+    this.cardReason.setColor(recommended ? UI.info : gate ? UI.warn : UI.textMuted);
 
     this.rebuildAdjustments(entry);
     this.refreshPreview(entry);

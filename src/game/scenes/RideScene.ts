@@ -89,6 +89,9 @@ export class RideScene extends Phaser.Scene {
   private pushOffered = false;
   /** El reposo del día no venía alto: se puede ofrecer el empujón. */
   private readinessOk = true;
+  /** Lo que el rider contesta en el resumen; se guarda con la sesión al responder. */
+  private rpe: RideRpe | undefined;
+  private note: string | undefined;
 
   constructor() {
     super('RideScene');
@@ -107,13 +110,15 @@ export class RideScene extends Phaser.Scene {
     this.quitting = false;
     this.pushOffered = false;
     this.readinessOk = true;
+    this.rpe = undefined;
+    this.note = undefined;
     this.ghostTrace = this.findGhostTrace(program, inputMode);
 
     this.atmosphere = new Atmosphere(this);
 
     this.ghost = new Ghost(this);
     this.cyclist = new Cyclist(this);
-    this.horde = new Horde(this);
+    this.horde = new Horde(this, program.target);
     this.effects = new Effects(this);
     ensureVignette(this);
     this.add.image(0, 0, 'fx-vignette').setOrigin(0, 0).setDepth(5);
@@ -161,6 +166,7 @@ export class RideScene extends Phaser.Scene {
         source: heartRate,
         history: this.history(),
         safetyNote: this.safetyNoteForThisWeek(),
+        why: loadPlanState().why,
         onStart: (restBpm) => this.beginRide(restBpm),
         onEasier: (restBpm) => this.switchToEasier(restBpm),
         onRest: () => this.scene.start('StartScene'),
@@ -190,22 +196,30 @@ export class RideScene extends Phaser.Scene {
     return (this.registry.get('sessionHistory') as SessionRecord[] | undefined) ?? [];
   }
 
-  /** La última salida completa con este mismo programa y la misma duración: su rastro es el fantasma. */
+  /**
+   * El fantasma: la última salida completa con este mismo programa y la
+   * misma duración, o la mejor (menos capturas, y a igualdad más ventaja
+   * media) si el rider lo eligió así.
+   */
   private findGhostTrace(program: TrainingProgram, inputMode: InputMode): readonly number[] | undefined {
     if (inputMode === 'feel') return undefined;
     const plannedSec = totalDurationSec(expandProgram(program));
-    const previous = this.history()
-      .filter(
-        (r) =>
-          r.programId === program.id &&
-          r.completed &&
-          r.plannedSec === plannedSec &&
-          r.inputMode !== 'feel' &&
-          r.gapTrace !== undefined &&
-          r.gapTrace.length > 0,
-      )
-      .at(-1);
-    return previous?.gapTrace;
+    const candidates = this.history().filter(
+      (r) =>
+        r.programId === program.id &&
+        r.completed &&
+        r.plannedSec === plannedSec &&
+        r.inputMode !== 'feel' &&
+        r.gapTrace !== undefined &&
+        r.gapTrace.length > 0,
+    );
+    if (candidates.length === 0) return undefined;
+    if (loadPlanState().ghostMode !== 'best') return candidates[candidates.length - 1]?.gapTrace;
+    const meanGap = (r: SessionRecord) => (r.gapTrace ?? []).reduce((a, b) => a + b, 0) / Math.max(1, r.gapTrace?.length ?? 1);
+    const best = candidates.reduce((a, b) =>
+      b.timesCaught < a.timesCaught || (b.timesCaught === a.timesCaught && meanGap(b) > meanGap(a)) ? b : a,
+    );
+    return best.gapTrace;
   }
 
   /** El aviso de seguridad, una vez por semana en el ritual. */
@@ -414,7 +428,7 @@ export class RideScene extends Phaser.Scene {
    * inmediato, y a IndexedDB para la próxima vez. Un fallo de disco no toca
    * el ride.
    */
-  private recordSession(summary: RideSummary, completed: boolean, rpe?: RideRpe): SessionRecord {
+  private recordSession(summary: RideSummary, completed: boolean): SessionRecord {
     const stored = this.registry.get('riderProfileStored') as StoredRiderProfile | undefined;
     const record = toSessionRecord({
       startedAtMs: this.startedAtMs,
@@ -425,7 +439,8 @@ export class RideScene extends Phaser.Scene {
       summary,
       hrRestBpm: stored?.hrRestBpm ?? RIDER.hrRestBpm,
       preRideRestBpm: this.preRideRestBpm,
-      rpe,
+      rpe: this.rpe,
+      note: this.note,
     });
     const history = this.history();
     this.registry.set('sessionHistory', [...history.filter((r) => r.id !== record.id), record]);
@@ -450,8 +465,13 @@ export class RideScene extends Phaser.Scene {
       mode,
       onRpe: (rpe) => {
         // La respuesta se guarda con la sesión, y la calibración aprende con ella.
-        this.recordSession(summary, completed, rpe);
+        this.rpe = rpe;
+        this.recordSession(summary, completed);
         return mode === 'heartRate' && completed ? this.applyCalibration(summary, rpe) : undefined;
+      },
+      onNote: (note) => {
+        this.note = note;
+        this.recordSession(summary, completed);
       },
       onNextRide: (dayStartMs) => savePlanState({ nextRideDayMs: dayStartMs }),
       onBack: () => this.scene.start('StartScene'),

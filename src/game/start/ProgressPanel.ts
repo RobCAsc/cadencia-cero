@@ -1,12 +1,16 @@
 import Phaser from 'phaser';
 import type { SessionRecord } from '../../sim/history';
+import { marks } from '../../sim/marks';
 import {
   healthTrends,
   personalRecords,
   recentWeeks,
   routeProgress,
+  season,
+  SEASON_WEEKS,
   streakWeeks,
   summarizeWeek,
+  weekAtRisk,
   weekStartMs,
   type Trend,
 } from '../../sim/progress';
@@ -50,8 +54,9 @@ export class ProgressPanel {
   private drawWeek(sessions: readonly SessionRecord[], nowMs: number, y0: number): number {
     const week = summarizeWeek(sessions, weekStartMs(nowMs));
     const streak = streakWeeks(sessions, nowMs);
+    const current = season(sessions, nowMs);
     let y = y0;
-    this.heading(y, 'ESTA SEMANA');
+    this.heading(y, current ? `TEMPORADA ${current.number} · SEMANA ${current.week} DE ${SEASON_WEEKS}` : 'ESTA SEMANA');
     y += 26;
 
     const done = Math.min(week.sessions, week.goal.sessionsPerWeek);
@@ -83,15 +88,19 @@ export class ProgressPanel {
     this.bar(y, Math.min(1, week.activeMin / week.goal.activeMinPerWeek), week.met ? 0x2ecc71 : 0x16a085);
     y += 22;
 
-    const streakText =
-      streak >= 2
+    // La racha; y desde el sábado, si la semana está en riesgo, eso en su lugar,
+    // con la puerta de escape al lado.
+    const risk = weekAtRisk(sessions, nowMs);
+    const streakText = risk
+      ? `Quedan ${risk.daysLeft === 1 ? 'hoy' : `${risk.daysLeft} días`} y ${risk.ridesMissing} salida${risk.ridesMissing === 1 ? '' : 's'}: diez minutos la salvan.`
+      : streak >= 2
         ? `Racha: ${streak} semanas seguidas`
         : streak === 1
           ? 'Racha: 1 semana. La segunda la hace racha.'
           : sessions.length === 0
             ? 'La primera semana empieza hoy.'
             : 'Sin racha. Cumple esta semana y arranca.';
-    this.text(this.x, y, streakText, 18, streak >= 2 ? ROUTE_TEXT : UI.textMuted);
+    this.text(this.x, y, streakText, risk ? 17 : 18, risk ? UI.warn : streak >= 2 ? ROUTE_TEXT : UI.textMuted);
     y += 34;
 
     // Las últimas semanas como barritas: cuántas salidas, y si la meta se cumplió.
@@ -214,11 +223,14 @@ export class ProgressPanel {
             false,
           )}`,
     ]);
-    lines.push(['Sin ser alcanzado', `${r.cleanRides} de ${r.rides} salidas`]);
-    lines.push(['Más larga', `${formatMMSS(r.longestRideSec)} · ${km1(r.longestRideKm)} km`]);
+    lines.push(['Sin ser alcanzado', `${r.cleanRides} de ${r.rides} salidas · más larga ${formatMMSS(r.longestRideSec)}`]);
+    const all = marks(sessions);
+    const got = all.filter((m) => m.achievedAtMs !== undefined);
+    const latest = got.length > 0 ? got.reduce((a, b) => ((a.achievedAtMs ?? 0) >= (b.achievedAtMs ?? 0) ? a : b)) : undefined;
+    lines.push(['Marcas', latest ? `${got.length} de ${all.length} · última: ${latest.title}` : `0 de ${all.length} · toca "Marcas" para verlas`]);
     lines.forEach(([label, value], i) => {
       this.text(this.x, y + i * 26, label, 16, UI.textDim);
-      this.text(this.x + 190, y + i * 26, value, 17, UI.textMuted);
+      this.text(this.x + 190, y + i * 26, value, label === 'Marcas' ? 16 : 17, label === 'Marcas' ? ROUTE_TEXT : UI.textMuted);
     });
   }
 

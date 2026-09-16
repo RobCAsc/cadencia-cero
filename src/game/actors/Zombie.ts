@@ -25,14 +25,18 @@ export class Zombie {
   private walkPhase: number;
   private run = 0;
 
-  constructor(scene: Phaser.Scene, seed: number, x: number, y: number) {
+  /**
+   * @param scale tamaño relativo (el corredor del umbral es más grande).
+   * @param strideMul zancada relativa (los rezagados se arrastran más despacio).
+   */
+  constructor(scene: Phaser.Scene, seed: number, x: number, y: number, scale = 1, strideMul = 1) {
     const rnd = lcg(seed * 7919 + 17);
-    this.h = 74 + rnd() * 20;
+    this.h = (74 + rnd() * 20) * scale;
     this.tint = TINTS[Math.floor(rnd() * TINTS.length)] ?? TINTS[0]!;
     this.eyeColor = EYES[Math.floor(rnd() * EYES.length)] ?? EYES[0]!;
     this.baseLean = 0.18 + rnd() * 0.24;
     this.armTheta = -0.12 + rnd() * 0.3;
-    this.strideScale = 0.8 + rnd() * 0.4;
+    this.strideScale = (0.8 + rnd() * 0.4) * strideMul;
     this.walkPhase = rnd() * Math.PI * 2;
     this.gfx = scene.add.graphics({ x, y });
   }

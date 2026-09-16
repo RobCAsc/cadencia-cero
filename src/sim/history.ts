@@ -41,6 +41,10 @@ export interface SessionRecord {
   timesCaughtInEasy?: number;
   /** Cómo le pareció al rider, si contestó. */
   rpe?: RideRpe;
+  /** Una palabra del rider sobre el día ("cansado", "dormí mal", "genial"). */
+  note?: string;
+  /** Mejor racha de segundos seguidos dentro de la zona prescrita. */
+  bestInZoneRunSec?: number;
   /** Ventaja cada pocos segundos: el fantasma para la próxima vez con el mismo programa. */
   gapTrace?: number[];
 }
@@ -55,6 +59,7 @@ export interface SessionInput {
   hrRestBpm: number;
   preRideRestBpm?: number;
   rpe?: RideRpe;
+  note?: string;
 }
 
 export function toSessionRecord(input: SessionInput): SessionRecord {
@@ -73,7 +78,9 @@ export function toSessionRecord(input: SessionInput): SessionRecord {
     timesCaught: s.timesCaught,
     timesCaughtInEasy: s.timesCaughtInEasy,
     ...(input.rpe !== undefined ? { rpe: input.rpe } : {}),
+    ...(input.note ? { note: input.note } : {}),
     ...(s.gapTrace.length > 0 ? { gapTrace: [...s.gapTrace] } : {}),
+    bestInZoneRunSec: s.bestInZoneRunSec,
     avgHeartRateBpm: s.avgHeartRateBpm,
     peakHeartRateBpm: s.peakHeartRateBpm,
     avgEffortFrac: s.avgEffortFrac,

@@ -4,21 +4,28 @@ import {
   brokenRecords,
   empujonesClean,
   healthTrends,
+  heartbeats,
   lastTwoTooHard,
   metWeeks,
   nextRideOptions,
   nextRideStatus,
   personalRecords,
+  planPhase,
   preRideRestReadings,
+  programGate,
   readiness,
   recentWeeks,
   recommendToday,
   REFUGES,
   restBaseline,
   routeProgress,
+  season,
+  seasonReport,
+  seasonReportDue,
   streakWeeks,
   streakWeeksBefore,
   summarizeWeek,
+  weekAtRisk,
   weeklyReview,
   weeklyReviewDue,
   weekStartMs,
@@ -340,6 +347,63 @@ describe('recommendToday: el plan por fases', () => {
   });
 });
 
+describe('puertas por fase y semana en riesgo', () => {
+  const spread = (n: number) => Array.from({ length: n }, (_, i) => ride(7 + i * 2, i === 1 ? CLEAN_EMPUJONES : {}));
+
+  it('planPhase da la fase con su porqué, y programGate explica qué falta sin prohibir', () => {
+    expect(planPhase([], NOW)).toEqual({ phase: 'arranque' });
+    expect(planPhase(spread(12), NOW)).toEqual({ phase: 'rotacion' });
+    expect(programGate('fondo', [], NOW)).toBeUndefined();
+    expect(programGate('oleadas', spread(3), NOW)).toContain('salida 12');
+    expect(programGate('oleadas', spread(12), NOW)).toBeUndefined();
+    expect(programGate('cuestas', spread(12), NOW)).toContain('salida 18');
+    expect(programGate('umbral', spread(30), NOW)).toBeUndefined();
+    const noEmpujones = Array.from({ length: 12 }, (_, i) => ride(7 + i * 2));
+    expect(programGate('oleadas', noEmpujones, NOW)).toContain('Empujones');
+  });
+
+  it('la semana está en riesgo desde el sábado, sin cumplir y con salidas por hacer', () => {
+    const saturday = new Date(2026, 8, 19, 10, 0, 0).getTime();
+    const sunday = new Date(2026, 8, 20, 10, 0, 0).getTime();
+    // ride(1) y ride(2) son martes y lunes de la semana de NOW (14 a 20 de septiembre).
+    expect(weekAtRisk([ride(1)], NOW)).toBeUndefined(); // miércoles: pronto
+    expect(weekAtRisk([ride(1)], saturday)).toEqual({ daysLeft: 2, ridesMissing: 2 });
+    expect(weekAtRisk([ride(1), ride(2)], sunday)).toEqual({ daysLeft: 1, ridesMissing: 1 });
+    expect(weekAtRisk([ride(0), ride(1), ride(2)], saturday)).toBeUndefined(); // cumplida
+  });
+
+  it('el dato del corazón redondea a la centena', () => {
+    expect(heartbeats(130, 1200)).toBe(2600);
+    expect(heartbeats(0, 1200)).toBeUndefined();
+  });
+});
+
+describe('temporadas de doce semanas', () => {
+  it('cuenta desde la semana de la primera salida', () => {
+    expect(season([], NOW)).toBeUndefined();
+    const first = ride(10 * 7); // hace diez semanas
+    expect(season([first], NOW)).toMatchObject({ number: 1, week: 11 });
+    expect(season([ride(13 * 7)], NOW)).toMatchObject({ number: 2, week: 2 });
+  });
+
+  it('el informe resume la temporada cerrada y solo se pide una vez', () => {
+    const sessions = Array.from({ length: 36 }, (_, i) =>
+      ride(13 * 7 - i * 2 - 1, { preRideRestBpm: 66 - Math.floor(i / 6), recoveryDrops: [14 + i / 4], inZoneSec: 900 }),
+    );
+    const report = seasonReport(sessions, 1);
+    expect(report.number).toBe(1);
+    expect(report.rides).toBeGreaterThan(30);
+    expect(report.weeksMet).toBe(9); // diez semanas con salidas; la primera y la última, a medias
+    expect(report.restStartBpm).toBe(66);
+    expect(report.restEndBpm).toBeLessThan(66);
+    expect(report.recoveryBpm).toBeGreaterThan(14);
+    expect(report.zonePrecision).toBeCloseTo(0.75, 2);
+    expect(seasonReportDue(sessions, undefined, NOW)).toBe(1);
+    expect(seasonReportDue(sessions, 1, NOW)).toBeUndefined();
+    expect(seasonReportDue([ride(3)], undefined, NOW)).toBeUndefined(); // temporada 1 en curso
+  });
+});
+
 describe('la próxima salida con día', () => {
   it('ofrece mañana, pasado y el siguiente, con su nombre', () => {
     const options = nextRideOptions(NOW); // miércoles
@@ -385,6 +449,15 @@ describe('la revisión semanal', () => {
     expect(review.restPreviousWeekBpm).toBe(67);
     expect(review.streak).toBe(2);
     expect(review.plan.programId).toBeTruthy();
+    expect(review.notes).toEqual([]);
+  });
+
+  it('recoge las palabras del diario de la semana pasada, las repetidas primero', () => {
+    const sessions = [ride(9, { note: 'cansado' }), ride(7, { note: 'genial' }), ride(5, { note: 'cansado' }), ride(1, { note: 'hoy no' })];
+    expect(weeklyReview(sessions, NOW).notes).toEqual([
+      { note: 'cansado', times: 2 },
+      { note: 'genial', times: 1 },
+    ]);
   });
 });
 

@@ -18,6 +18,7 @@ import {
   PEAK_RAISE_PER_RIDE_BPM,
   reserveWarning,
   STEP_RETEST_DAYS,
+  stepProgress,
   stepTestDue,
   withMaxFromAge,
   withRitualRest,
@@ -42,6 +43,7 @@ const summary = (over: Partial<RideSummary> = {}): RideSummary => ({
   aboveZoneSec: 0,
   recoveryDrops: [],
   gapTrace: [],
+  bestInZoneRunSec: 0,
   ...over,
 });
 
@@ -154,6 +156,18 @@ describe('perfil del rider', () => {
     expect(stepTestDue(p, t0 + (STEP_RETEST_DAYS + 1) * DAY_MS)).toBe('stale');
     expect(stepTestDue(withRitualRest(p, 55), t0 + DAY_MS)).toBe('restDropped');
     expect(stepTestDue(withRitualRest(p, 57), t0 + DAY_MS)).toBe('fresh');
+  });
+
+  it('la escalera como examen: cada escalera queda en el historial y se compara con la anterior', () => {
+    const t0 = 1_800_000_000_000;
+    const first = withStepTest(defaultRiderProfile(33), 140, 165, t0);
+    expect(first.stepHistory).toHaveLength(1);
+    expect(stepProgress(first)).toBeUndefined();
+    const second = withStepTest(first, 134, 162, t0 + 42 * DAY_MS);
+    expect(second.stepHistory).toHaveLength(2);
+    expect(stepProgress(second)).toEqual({ easyDeltaBpm: -6, hardDeltaBpm: -3, days: 42 });
+    // Sin fecha (perfiles viejos, tests) no se anota nada.
+    expect(withStepTest(defaultRiderProfile(33), 140, 165).stepHistory).toBeUndefined();
   });
 
   it('el reposo del minuto de calma manda salvo que esté fijado a mano, y recalcula la escalera', () => {

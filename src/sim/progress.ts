@@ -336,6 +336,57 @@ export function lastTwoTooHard(sessions: readonly SessionRecord[]): boolean {
   return countable.length >= 2 && countable.slice(-2).every((s) => s.rpe === 'hard');
 }
 
+export interface PhaseVerdict {
+  phase: PlanPhase;
+  /** Por qué la fase no es la que el contador daría, si aplica. */
+  held?: string;
+}
+
+/**
+ * La fase del plan: por contador de salidas, y luego por evidencia (la
+ * rotación se gana con dos semanas cumplidas y unos Empujones limpios) y por
+ * lo que dijo el rider (dos "demasiado" seguidos repiten la fase anterior).
+ */
+export function planPhase(sessions: readonly SessionRecord[], nowMs: number): PhaseVerdict {
+  const countable = sessions.filter(isCountable);
+  const total = countable.length;
+  let phase: PlanPhase = total < BASE_FROM_RIDES ? 'arranque' : total < ROTATION_FROM_RIDES ? 'base' : 'rotacion';
+  let held: string | undefined;
+  if (phase === 'rotacion') {
+    if (metWeeks(sessions, nowMs) < ROTATION_MIN_MET_WEEKS) {
+      phase = 'base';
+      held = 'La rotación llega con dos semanas cumplidas.';
+    } else if (!empujonesClean(countable)) {
+      phase = 'base';
+      held = 'La rotación llega con unos Empujones completos sin capturas en los tramos suaves.';
+    }
+  }
+  if (lastTwoTooHard(countable) && phase !== 'arranque') {
+    phase = phase === 'rotacion' ? 'base' : 'arranque';
+    held = 'Las dos últimas te parecieron demasiado: repetimos la fase anterior, más corto.';
+  }
+  return held ? { phase, held } : { phase };
+}
+
+/** Programas que el plan reserva para la rotación, y desde qué salida. */
+const GATED_FROM_RIDES: Record<string, number> = { oleadas: 12, cuestas: 18, umbral: 24, piramide: 24 };
+
+/**
+ * Por qué un programa todavía no toca, en una frase; undefined si está
+ * abierto. Es información, no prohibición: el chip sigue siendo elegible.
+ */
+export function programGate(programId: string, sessions: readonly SessionRecord[], nowMs: number): string | undefined {
+  const fromRides = GATED_FROM_RIDES[programId];
+  if (fromRides === undefined) return undefined;
+  const total = sessions.filter(isCountable).length;
+  const verdict = planPhase(sessions, nowMs);
+  if (verdict.phase === 'rotacion' && total >= fromRides) return undefined;
+  if (total < fromRides) {
+    return `El plan lo abre en la salida ${fromRides} (llevas ${total}), en rotación: dos semanas cumplidas y unos Empujones sin capturas en tramos suaves.`;
+  }
+  return `El plan lo abre en rotación. ${verdict.held ?? ''}`.trim();
+}
+
 /**
  * Qué salida toca hoy: un plan por fases que se explica solo.
  * - Arranque (salidas 1-5, unas dos semanas): corto y suave, Z1-Z2, sin oleadas.
@@ -362,21 +413,7 @@ export function recommendToday(sessions: readonly SessionRecord[], nowMs: number
   const doneBefore = streakWeeksBefore(sessions, nowMs);
 
   // La fase por contador, y luego la evidencia: la rotación se gana.
-  let phase: PlanPhase = total < BASE_FROM_RIDES ? 'arranque' : total < ROTATION_FROM_RIDES ? 'base' : 'rotacion';
-  let held: string | undefined;
-  if (phase === 'rotacion') {
-    if (metWeeks(sessions, nowMs) < ROTATION_MIN_MET_WEEKS) {
-      phase = 'base';
-      held = 'La rotación llega con dos semanas cumplidas.';
-    } else if (!empujonesClean(countable)) {
-      phase = 'base';
-      held = 'La rotación llega con unos Empujones completos sin capturas en los tramos suaves.';
-    }
-  }
-  if (tooHard && phase !== 'arranque') {
-    phase = phase === 'rotacion' ? 'base' : 'arranque';
-    held = 'Las dos últimas te parecieron demasiado: repetimos la fase anterior, más corto.';
-  }
+  const { phase, held } = planPhase(sessions, nowMs);
 
   // Carga progresiva: un minuto más de tramo principal por salida hecha,
   // hasta el tope de la fase; menos si las últimas fueron demasiado.
@@ -494,6 +531,102 @@ export function nextRideStatus(nextDayMs: number | undefined, nowMs: number): Ne
   return { state: 'missed', label: `El ${name} pasó. La horda sigue ahí; cuando quieras.` };
 }
 
+// ---- la semana en riesgo ------------------------------------------------------
+
+export interface WeekRisk {
+  /** Días que quedan contando hoy. */
+  daysLeft: number;
+  ridesMissing: number;
+}
+
+/**
+ * Con dos días o menos y salidas por hacer, la semana está en riesgo; se
+ * dice con la puerta de escape al lado (diez minutos la salvan). Aversión a
+ * la pérdida en su dosis justa: nunca antes del sábado.
+ */
+export function weekAtRisk(sessions: readonly SessionRecord[], nowMs: number, goal: HabitGoals = HABIT): WeekRisk | undefined {
+  const week = summarizeWeek(sessions, weekStartMs(nowMs), goal);
+  if (week.met) return undefined;
+  const d = new Date(nowMs);
+  const daysLeft = 7 - ((d.getDay() + 6) % 7); // lunes 7 … domingo 1
+  if (daysLeft > 2) return undefined;
+  const ridesMissing = goal.sessionsPerWeek - week.sessions;
+  if (ridesMissing <= 0) return undefined;
+  return { daysLeft, ridesMissing };
+}
+
+// ---- temporadas ---------------------------------------------------------------
+
+export const SEASON_WEEKS = 12;
+
+export interface Season {
+  number: number;
+  /** Semana dentro de la temporada, 1..SEASON_WEEKS. */
+  week: number;
+  startMs: number;
+  endMs: number;
+}
+
+/** La temporada en curso: doce semanas desde la semana de la primera salida. */
+export function season(sessions: readonly SessionRecord[], nowMs: number): Season | undefined {
+  if (sessions.length === 0) return undefined;
+  const first = firstWeekOf(sessions);
+  const weeks = Math.max(0, Math.floor((weekStartMs(nowMs) - first) / (7 * DAY_MS)));
+  const number = Math.floor(weeks / SEASON_WEEKS) + 1;
+  const startMs = first + (number - 1) * SEASON_WEEKS * 7 * DAY_MS;
+  return { number, week: (weeks % SEASON_WEEKS) + 1, startMs, endMs: startMs + SEASON_WEEKS * 7 * DAY_MS };
+}
+
+export interface SeasonReport {
+  number: number;
+  rides: number;
+  weeksMet: number;
+  activeMinPerWeek: number;
+  distanceKm: number;
+  /** Reposo al empezar (mediana de las 3 primeras lecturas) y al acabar (3 últimas). */
+  restStartBpm: number | undefined;
+  restEndBpm: number | undefined;
+  recoveryBpm: number | undefined;
+  zonePrecision: number | undefined;
+}
+
+/** El informe de una temporada ya cerrada. */
+export function seasonReport(sessions: readonly SessionRecord[], number: number): SeasonReport {
+  const first = sessions.length > 0 ? firstWeekOf(sessions) : 0;
+  const startMs = first + (number - 1) * SEASON_WEEKS * 7 * DAY_MS;
+  const endMs = startMs + SEASON_WEEKS * 7 * DAY_MS;
+  const inSeason = sessions.filter((s) => s.startedAtMs >= startMs && s.startedAtMs < endMs);
+  const countable = inSeason.filter(isCountable);
+  let weeksMet = 0;
+  for (let w = startMs; w < endMs; w += 7 * DAY_MS) if (summarizeWeek(sessions, w).met) weeksMet += 1;
+  const rests = preRideRestReadings(inSeason);
+  const recoveries = inSeason
+    .map((s) => s.recoveryDrops)
+    .filter((d): d is number[] => d !== undefined && d.length > 0)
+    .map((d) => mean(d));
+  const precision = countable.filter((s) => s.inZoneSec !== undefined && s.durationSec > 0).map((s) => (s.inZoneSec ?? 0) / s.durationSec);
+  return {
+    number,
+    rides: countable.length,
+    weeksMet,
+    activeMinPerWeek: inSeason.reduce((acc, s) => acc + activeSec(s.zoneSec), 0) / 60 / SEASON_WEEKS,
+    distanceKm: inSeason.reduce((acc, s) => acc + s.distanceM, 0) / 1000,
+    restStartBpm: rests.length >= 3 ? Math.round(median(rests.slice(0, 3))) : undefined,
+    restEndBpm: rests.length >= 6 ? Math.round(median(rests.slice(-3))) : undefined,
+    recoveryBpm: recoveries.length > 0 ? Math.round(mean(recoveries)) : undefined,
+    zonePrecision: precision.length > 0 ? mean(precision) : undefined,
+  };
+}
+
+/** Toca el informe cuando empieza una temporada nueva y la anterior no se cerró aún (número > 1). */
+export function seasonReportDue(sessions: readonly SessionRecord[], lastReportedSeason: number | undefined, nowMs: number): number | undefined {
+  const current = season(sessions, nowMs);
+  if (!current || current.number <= 1) return undefined;
+  const closed = current.number - 1;
+  if (lastReportedSeason !== undefined && lastReportedSeason >= closed) return undefined;
+  return closed;
+}
+
 // ---- revisión semanal --------------------------------------------------------
 
 export interface WeeklyReview {
@@ -503,6 +636,8 @@ export interface WeeklyReview {
   /** Mediana del reposo del ritual en cada semana, si hubo lecturas. */
   restLastWeekBpm: number | undefined;
   restPreviousWeekBpm: number | undefined;
+  /** Lo que el rider anotó en las salidas de la semana pasada, con cuántas veces cada palabra. */
+  notes: Array<{ note: string; times: number }>;
   /** Lo que el plan propone para la semana que empieza. */
   plan: Recommendation;
 }
@@ -536,14 +671,26 @@ export function weeklyReview(sessions: readonly SessionRecord[], nowMs: number):
       .filter((bpm): bpm is number => bpm !== undefined && bpm > 0);
     return readings.length > 0 ? Math.round(median(readings)) : undefined;
   };
+  const counts = new Map<string, number>();
+  for (const s of sessions) {
+    if (weekStartMs(s.startedAtMs) !== lastStart || !s.note) continue;
+    counts.set(s.note, (counts.get(s.note) ?? 0) + 1);
+  }
   return {
     lastWeek: summarizeWeek(sessions, lastStart),
     previousWeek: summarizeWeek(sessions, prevStart),
     streak: streakWeeks(sessions, nowMs),
     restLastWeekBpm: restOf(lastStart),
     restPreviousWeekBpm: restOf(prevStart),
+    notes: [...counts].map(([note, times]) => ({ note, times })).sort((a, b) => b.times - a.times),
     plan: recommendToday(sessions, nowMs),
   };
+}
+
+/** Latidos que dio el corazón durante la salida, redondeados a la centena: un dato con sentido. */
+export function heartbeats(avgHeartRateBpm: number, durationSec: number): number | undefined {
+  if (avgHeartRateBpm <= 0 || durationSec <= 0) return undefined;
+  return Math.round((avgHeartRateBpm * durationSec) / 60 / 100) * 100;
 }
 
 // ---- el ritual de salida: reposo del día y disposición ---------------------

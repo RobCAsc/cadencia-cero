@@ -66,6 +66,20 @@ export async function saveSession(record: SessionRecord): Promise<boolean> {
   }
 }
 
+/** Guarda varias de una vez (importar una copia). Nunca lanza. */
+export async function saveSessions(records: readonly SessionRecord[]): Promise<boolean> {
+  if (!hasIndexedDb()) return false;
+  try {
+    await withStore('readwrite', async (store) => {
+      for (const record of records) await asPromise(store.put(record));
+    });
+    return true;
+  } catch (err) {
+    console.warn('[historial] no se pudieron guardar las sesiones', err);
+    return false;
+  }
+}
+
 /** Todas las sesiones, de la más antigua a la más reciente. */
 export async function loadSessions(): Promise<SessionRecord[]> {
   if (!hasIndexedDb()) return [];

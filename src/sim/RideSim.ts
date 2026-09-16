@@ -84,6 +84,9 @@ export class RideSim {
   private inZoneSec = 0; // dentro de la zona prescrita por el tramo
   private aboveZoneSec = 0; // por encima del techo del tramo
   private aboveZone = false;
+  /** Racha de segundos seguidos en zona, y la mejor de la salida. */
+  private inZoneRunSec = 0;
+  private bestInZoneRunSec = 0;
   /** Medición en curso de la recuperación tras una oleada. */
   private recovery: { endSec: number; peakBpm: number } | undefined;
   private readonly recoveryDrops: number[] = [];
@@ -336,6 +339,8 @@ export class RideSim {
     this.zoneSec[zone] = (this.zoneSec[zone] ?? 0) + dt;
     if (inZone) this.inZoneSec += dt;
     if (above) this.aboveZoneSec += dt;
+    this.inZoneRunSec = inZone ? this.inZoneRunSec + dt : 0;
+    this.bestInZoneRunSec = Math.max(this.bestInZoneRunSec, this.inZoneRunSec);
     this.effectiveRpm = rpm;
     this.lastPlayerKph = pKph;
     this.lastZombieKph = zKph;
@@ -518,6 +523,7 @@ export class RideSim {
       eased: this.eased,
       pushAvailable:
         this.ridePhase === 'riding' && !this.coolingDown && !this.pushUsed && seg.kind === 'steady',
+      inZoneRunSec: this.inZoneRunSec,
       playerSpeedKph: this.lastPlayerKph,
       zombieSpeedKph: this.lastZombieKph,
       resistanceLevel: this.resistanceLevel,
@@ -573,6 +579,7 @@ export class RideSim {
       aboveZoneSec: this.aboveZoneSec,
       recoveryDrops: [...this.recoveryDrops],
       gapTrace: [...this.gapTrace],
+      bestInZoneRunSec: this.bestInZoneRunSec,
     };
   }
 }
