@@ -44,6 +44,42 @@ export function blocksToProgram(blocks: readonly Block[], id = 'mia', name = 'M�
   return { id, name, target: 'custom', segments };
 }
 
+/**
+ * De un programa del catálogo a bloques del editor, para retocarlo tramo a
+ * tramo. Los repeat se desenrollan; undefined si no cabe en el editor (más
+ * de MAX_BLOCKS bloques, o tramos que el editor no conoce). Un rango de
+ * zonas queda en su zona alta: el rider ve los bloques y ajusta.
+ */
+export function programToBlocks(program: TrainingProgram): Block[] | undefined {
+  const segs = expandForBlocks(program);
+  if (!segs || segs.length > MAX_BLOCKS) return undefined;
+  return segs.map((s) => {
+    const [, hi] = zoneRange(s.zone);
+    return { kind: s.kind, minutes: Math.max(1, Math.round(s.durationSec / 60)), zone: hi };
+  });
+}
+
+function expandForBlocks(program: TrainingProgram): Array<SpeedSegment & { kind: BlockKind }> | undefined {
+  const out: Array<SpeedSegment & { kind: BlockKind }> = [];
+  for (let i = 0; i < program.segments.length; i++) {
+    const seg = program.segments[i]!;
+    if (seg.kind === 'repeat') {
+      const block = program.segments.slice(seg.fromIndex, i);
+      for (let n = 1; n < seg.times; n++) {
+        for (const s of block) {
+          if (s.kind === 'repeat' || s.kind === 'push') return undefined;
+          out.push(s as SpeedSegment & { kind: BlockKind });
+        }
+      }
+    } else if (seg.kind === 'push') {
+      return undefined;
+    } else {
+      out.push(seg as SpeedSegment & { kind: BlockKind });
+    }
+  }
+  return out;
+}
+
 /** Problemas de una salida diseñada, en frases; vacío si cumple las reglas. */
 export function validateProgram(program: TrainingProgram): string[] {
   const problems: string[] = [];

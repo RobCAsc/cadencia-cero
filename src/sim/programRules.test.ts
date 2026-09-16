@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { blocksToProgram, DEFAULT_BLOCKS, sustainability, validateProgram, type Block } from './programRules';
+import { OLEADAS } from './programs/oleadas';
+import { FONDO } from './programs/fondo';
+import { blocksToProgram, DEFAULT_BLOCKS, programToBlocks, sustainability, validateProgram, type Block } from './programRules';
 
 describe('el editor de salidas: reglas', () => {
   it('los bloques por defecto son una salida válida y sostenible', () => {
@@ -46,6 +48,19 @@ describe('el editor de salidas: reglas', () => {
     expect(verdict.message).toBeTruthy();
     // Sostenible o no, el veredicto es coherente con las capturas.
     expect(verdict.ok).toBe(verdict.timesCaught === 0);
+  });
+
+  it('un programa del catálogo se abre en el editor como bloques, con los repeat desenrollados', () => {
+    const fondo = programToBlocks(FONDO);
+    expect(fondo).toEqual([
+      { kind: 'warmup', minutes: 5, zone: 1 },
+      { kind: 'steady', minutes: 10, zone: 2 },
+      { kind: 'steady', minutes: 5, zone: 3 },
+      { kind: 'steady', minutes: 10, zone: 2 },
+      { kind: 'cooldown', minutes: 3, zone: 1 },
+    ]);
+    // Oleadas: 6 × (oleada + recuperación) más calor y calma pasan de ocho bloques.
+    expect(programToBlocks(OLEADAS)).toBeUndefined();
   });
 
   it('limita el total y el número de bloques', () => {

@@ -21,7 +21,7 @@ import {
   type PlanPhase,
   type Recommendation,
 } from '../../sim/progress';
-import { blocksToProgram, type Block } from '../../sim/programRules';
+import { blocksToProgram, programToBlocks, type Block } from '../../sim/programRules';
 import { reserveWarning, stepTestDue, zoneWidthBpm, type StoredRiderProfile } from '../../sim/riderProfile';
 import { loadPlanState, savePlanState, type PlanState } from '../../storage/planStore';
 import { Atmosphere } from '../atmosphere';
@@ -176,6 +176,7 @@ export class StartScene extends Phaser.Scene {
   private cardReason!: Phaser.GameObjects.Text;
   private cardGate!: Phaser.GameObjects.Text;
   private cardHorde!: Phaser.GameObjects.Graphics;
+  private editButton!: ReturnType<typeof makeIconButton>;
   private chips: Chip[] = [];
   private otherLabel: Phaser.GameObjects.Text | undefined;
   // Objetos de las filas de ajuste, destruidos y recreados al cambiar de
@@ -377,12 +378,21 @@ export class StartScene extends Phaser.Scene {
     });
   }
 
+  /** La salida elegida, abierta en el diseñador tramo a tramo (si cabe en él). */
+  private editSteps(): void {
+    const entry = this.catalog[this.selectedIndex];
+    if (!entry) return;
+    const blocks = programToBlocks(this.adjustedProgram(entry));
+    if (!blocks) return;
+    this.openBuilder(blocks);
+  }
+
   /** El editor de salidas: al guardar, la salida "Mía" entra en las pestañas. */
-  private openBuilder(): void {
+  private openBuilder(initial?: readonly Block[]): void {
     if (this.overlayOpen || this.profilePanel) return;
     this.overlayOpen = true;
     new BuilderPanel(this, {
-      initial: loadPlanState().customBlocks,
+      initial: initial ?? loadPlanState().customBlocks,
       onSave: (blocks) => {
         savePlanState({ customBlocks: blocks });
         this.catalog = catalogWithCustom(blocks);
@@ -467,13 +477,16 @@ export class StartScene extends Phaser.Scene {
       .setOrigin(1, 0)
       .setDepth(2);
     this.cardReason = this.add
-      .text(RIGHT_X + 26, POSTER_Y + 100, '', { fontFamily: FONT_SANS, fontSize: '16px', color: INK_MUTED, wordWrap: { width: RIGHT_W - 52 } })
+      .text(RIGHT_X + 26, POSTER_Y + 96, '', { fontFamily: FONT_SANS, fontSize: '15px', color: INK_MUTED, wordWrap: { width: RIGHT_W - 52 } })
       .setDepth(2);
-    this.preview = new ProfilePreview(this, RIGHT_X + 26, POSTER_Y + 152, RIGHT_W - 52, 84);
+    this.preview = new ProfilePreview(this, RIGHT_X + 26, POSTER_Y + 138, RIGHT_W - 52, 70, 2);
     this.cardGate = this.add
-      .text(RIGHT_X + 26, POSTER_Y + POSTER_H - 40, '', { fontFamily: FONT_SANS, fontSize: '13px', color: INK_RED, wordWrap: { width: RIGHT_W - 250 } })
+      .text(RIGHT_X + 26, POSTER_Y + POSTER_H - 22, '', { fontFamily: FONT_SANS, fontSize: '12px', color: INK_RED, wordWrap: { width: RIGHT_W - 260 } })
+      .setOrigin(0, 0.5)
       .setDepth(2);
     this.cardHorde = this.add.graphics().setDepth(2);
+    // Cada tramo se puede tocar: la salida se abre en el diseñador.
+    this.editButton = makeIconButton(this, RIGHT_X + RIGHT_W - 100, POSTER_Y + POSTER_H - 24, 150, 34, 'pencil', 'Editar pasos', () => this.editSteps(), 3, 13);
     paper(this, RIGHT_X, ADJUST_Y, RIGHT_W, ADJUST_H, { tilt: -0.003, depth: 1, dark: true, pins: false });
   }
 
@@ -561,6 +574,11 @@ export class StartScene extends Phaser.Scene {
     this.cardReason.setColor(recommended ? INK : INK_MUTED);
     this.cardGate.setText(!recommended && gate ? gate : '');
     this.drawHorde(entry.program.target);
+    // Editar pasos solo si la salida cabe en el diseñador (las de muchas oleadas no).
+    const editable = programToBlocks(this.adjustedProgram(entry)) !== undefined;
+    this.editButton.rect.setAlpha(editable ? 0.9 : 0.3);
+    this.editButton.label.setAlpha(editable ? 1 : 0.4);
+    this.editButton.gfx.setAlpha(editable ? 1 : 0.4);
 
     this.rebuildAdjustments(entry);
     this.refreshPreview(entry);
@@ -571,8 +589,8 @@ export class StartScene extends Phaser.Scene {
     const g = this.cardHorde;
     g.clear();
     const spec = TARGET_HORDE[target] ?? TARGET_HORDE.aerobic!;
-    let x = RIGHT_X + RIGHT_W - 30;
-    const y = POSTER_Y + POSTER_H - 30;
+    let x = RIGHT_X + RIGHT_W - 200;
+    const y = POSTER_Y + POSTER_H - 26;
     for (let i = 0; i < spec.count; i++) {
       icon(g, 'zombie', x, y, spec.size, INK_RED_HEX, spec.alpha - i * 0.08);
       x -= spec.size * 0.7;
