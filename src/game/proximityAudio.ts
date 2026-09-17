@@ -86,18 +86,21 @@ class ProximityAudio {
   /**
    * @param gapM metros de ventaja.
    * @param run01 0 horda arrastrándose … 1 a la carrera (de `Horde.run01`).
+   * @param calm la horda no gana ahora (ventaja congelada o asentándose, horda
+   *   parada): el zumbido y el latido se retiran para no empujar a apretar más.
    */
-  update(gapM: number, run01: number, dt: number): void {
+  update(gapM: number, run01: number, dt: number, calm = false): void {
     const ctx = this.ctx;
     if (!ctx || !this.running || !this.droneGain) return;
 
-    const closeness = 1 - Math.min(1, Math.max(0, gapM - 4) / DRONE_RANGE_M);
+    const felt = calm ? Math.max(gapM, HEARTBEAT_RANGE_M) : gapM;
+    const closeness = 1 - Math.min(1, Math.max(0, felt - 4) / DRONE_RANGE_M);
     const target = DRONE_MAX_GAIN * closeness * closeness;
     const current = this.droneGain.gain.value;
     this.droneGain.gain.value = current + (target - current) * Math.min(1, dt * 3);
 
-    if (gapM < HEARTBEAT_RANGE_M) {
-      const urgency = 1 - gapM / HEARTBEAT_RANGE_M;
+    if (felt < HEARTBEAT_RANGE_M) {
+      const urgency = 1 - felt / HEARTBEAT_RANGE_M;
       const bpm = 52 + urgency * 68;
       if (ctx.currentTime >= this.nextBeatAt) {
         this.thump(0, 0.5 + urgency * 0.35);

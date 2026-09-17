@@ -16,6 +16,8 @@ const summary: RideSummary = {
   aboveZoneSec: 60,
   recoveryDrops: [18, 21],
   gapTrace: [50, 58, 66],
+  hrTrace: [90, 120, 131],
+  staleHeartRateSec: 7.4,
   bestInZoneRunSec: 400,
 };
 

@@ -184,6 +184,11 @@ export class Hud {
       this.gapLabel.setText('congelada');
       this.gapLabel.setColor(UI.warn);
       icon(gg, 'snowflake', cx - this.gapLabel.width / 2 - 18, 124, 16, 0xf39c12);
+    } else if (state.settling) {
+      // El pulso viene bajando de un tramo más duro: la ventaja sigue viva.
+      this.gapLabel.setText(`bajando a ${zoneLabel(state.segment.zoneMin, state.segment.zoneMax)}`);
+      this.gapLabel.setColor(UI.info);
+      icon(gg, 'arrowDown', cx - this.gapLabel.width / 2 - 18, 124, 16, 0x7ec8ff);
     } else {
       this.gapLabel.setText('de ventaja');
       this.gapLabel.setColor(UI.textMuted);
@@ -348,6 +353,9 @@ export class Hud {
       } else if (state.aboveZone) {
         verdict = ' · afloja';
         color = UI.warn;
+      } else if (state.settling) {
+        verdict = ' · bajando';
+        color = UI.info;
       } else if (zone < zoneMin) {
         verdict = ' · sube';
       } else {

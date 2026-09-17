@@ -17,6 +17,7 @@ const cfg = (over: Partial<SimConfig> = {}): SimConfig => ({
   effort: EFFORT_LINEAR,
   heartRateSmoothingSec: 0,
   hordeWakeSec: 0,
+  zoneEdgeBpm: 0, // los bordes exactos; la tolerancia se prueba en RideSim.heartRate.test
   ...over,
 });
 
@@ -149,21 +150,54 @@ describe('el resto en suave', () => {
 });
 
 describe('el empujón opcional', () => {
-  it('se inserta en un tramo continuo, alarga la salida y premia si no te alcanzan', () => {
+  it('entra tras una cuenta atrás, la horda no acelera, y premia con los segundos en zona que pide el bono', () => {
     const sim = make(fondo());
-    beatFor(sim, 120, 130); // en el steady: 70 km/h contra 30
+    beatFor(sim, 120, 125); // en el steady Z2: 65 km/h contra 30
     expect(sim.state.pushAvailable).toBe(true);
     const before = sim.state.totalSec;
     expect(sim.insertPush(60, 3)).toBe(true);
     expect(sim.state.totalSec).toBe(before + 60);
-    expect(sim.state.segment.kind).toBe('push');
+    // La cuenta atrás corre dentro del tramo: el empujón es el siguiente, al paso de la horda de ahora.
+    expect(sim.state.segment.kind).toBe('steady');
+    expect(sim.state.segment.next).toMatchObject({ kind: 'push', zombieSpeedKph: 30 });
+    expect(sim.state.segment.next?.inSec).toBeCloseTo(SIM.push.countdownSec, 1);
     expect(sim.state.pushAvailable).toBe(false);
+    beatFor(sim, SIM.push.countdownSec + 0.05, 125);
+    expect(sim.state.segment.kind).toBe('push');
+    expect(sim.state.zombieSpeedKph).toBe(30);
+    // El pulso tarda: 25 s todavía en Z2. La horda no gana.
+    const gapAtStart = sim.state.gapM;
+    beatFor(sim, 25, 125);
+    expect(sim.state.gapM).toBeGreaterThanOrEqual(gapAtStart - 0.01);
     const distanceBefore = sim.state.distanceM;
-    const events = beatFor(sim, 61, 140);
+    const events = beatFor(sim, 36, 135); // 75 %: Z3 durante 35 s ≥ minZoneSec
     const done = events.find((e) => e.type === 'pushDone');
     expect(done).toMatchObject({ type: 'pushDone', bonusM: SIM.push.bonusM });
     expect(sim.state.distanceM).toBeGreaterThan(distanceBefore + SIM.push.bonusM);
     expect(sim.state.segment.kind).toBe('steady');
+  });
+
+  it('si el pulso no llega a la zona los segundos que pide el bono: ni bono ni pérdida', () => {
+    const sim = make(fondo());
+    beatFor(sim, 120, 125);
+    expect(sim.insertPush(60, 3)).toBe(true);
+    beatFor(sim, SIM.push.countdownSec + 0.05, 125);
+    const gapAtStart = sim.state.gapM;
+    const distanceBefore = sim.state.distanceM;
+    const events = beatFor(sim, 61, 125); // se queda en Z2 todo el minuto
+    expect(events.find((e) => e.type === 'pushMissed')).toMatchObject({ type: 'pushMissed' });
+    expect(events.some((e) => e.type === 'pushDone')).toBe(false);
+    expect(sim.state.gapM).toBeGreaterThanOrEqual(gapAtStart - 0.01);
+    // Solo lo pedaleado: 65 km/h durante 61 s, sin los 200 m del bono.
+    expect(sim.state.distanceM).toBeCloseTo(distanceBefore + (65 / 3.6) * 61, -1);
+  });
+
+  it('no cabe si al tramo continuo no le queda cuenta atrás y cola', () => {
+    const sim = make(fondo());
+    beatFor(sim, 60 + 600 - SIM.push.countdownSec - 10, 125); // a 25 s del final del steady
+    expect(sim.state.segment.kind).toBe('steady');
+    expect(sim.state.pushAvailable).toBe(false);
+    expect(sim.insertPush()).toBe(false);
   });
 
   it('solo uno por salida y solo en un tramo continuo', () => {
@@ -204,12 +238,58 @@ describe('la racha en zona', () => {
   });
 });
 
+describe('la ventana de asentamiento', () => {
+  /** Calor, un tempo en Z3 y vuelta a Z2 con la misma horda: solo cambia el techo. */
+  const conTempo = (): TrainingProgram =>
+    program([
+      { kind: 'warmup', durationSec: 60, zone: [0, 1], zombieSpeedKph: 10 },
+      { kind: 'steady', durationSec: 120, zone: 3, zombieSpeedKph: 30 },
+      { kind: 'steady', durationSec: 600, zone: 2, zombieSpeedKph: 30 },
+    ]);
+
+  it('al bajar de Z3 a Z2 el techo baja en rampa: el pulso que viene bajando no congela la ventaja', () => {
+    const sim = make(conTempo(), { gapMaxM: 1e6, zoneSettleSec: 45 });
+    beatFor(sim, 180.05, 135); // 75 %: dentro del Z3 hasta el cambio
+    expect(sim.state.segment.zoneMax).toBe(2);
+    const gapAtChange = sim.state.gapM;
+    // 10 s después, aún a 75 %: el techo efectivo va por el 78 % → asentando, no congelado, y la ventaja crece.
+    beatFor(sim, 10, 135);
+    expect(sim.state.settling).toBe(true);
+    expect(sim.state.aboveZone).toBe(false);
+    expect(sim.state.gapM).toBeGreaterThan(gapAtChange);
+    // Quien no baja el pulso queda congelado cuando la rampa cruza su esfuerzo (22,5 s): pasarse sigue sin rendir.
+    beatFor(sim, 30, 135);
+    expect(sim.state.aboveZone).toBe(true);
+    expect(sim.state.settling).toBe(false);
+    const frozen = sim.state.gapM;
+    beatFor(sim, 10, 135);
+    expect(sim.state.gapM).toBeCloseTo(frozen, 5);
+  });
+
+  it('quien baja el pulso a Z2 dentro de la ventana nunca queda congelado', () => {
+    const sim = make(conTempo(), { gapMaxM: 1e6 });
+    beatFor(sim, 180.05, 135);
+    const aboveBefore = sim.summary().aboveZoneSec;
+    for (let k = 0; k < 40; k++) beatFor(sim, 1, 135 - k * 0.5); // 135 → 115 en 40 s (75 % → 65 %)
+    expect(sim.summary().aboveZoneSec).toBeCloseTo(aboveBefore, 5);
+    expect(sim.state.aboveZone).toBe(false);
+    expect(sim.state.settling).toBe(false);
+  });
+});
+
 describe('la ventaja deja rastro', () => {
-  it('muestrea la ventaja cada gapTraceStepSec para el fantasma', () => {
+  it('muestrea la ventaja y el pulso cada gapTraceStepSec, y cuenta los segundos con la pulsera callada', () => {
     const sim = make(fondo(), { gapTraceStepSec: 5 });
     beatFor(sim, 30, 120);
-    const trace = sim.summary().gapTrace;
-    expect(trace.length).toBeGreaterThanOrEqual(6);
-    expect(trace[0]).toBeGreaterThanOrEqual(SIM.initialGapM);
+    for (let k = 0; k < 200; k++) {
+      clockMs += 100;
+      sim.update(0.1); // 20 s sin muestra
+    }
+    const s = sim.summary();
+    expect(s.gapTrace.length).toBeGreaterThanOrEqual(6);
+    expect(s.gapTrace[0]).toBeGreaterThanOrEqual(SIM.initialGapM);
+    expect(s.hrTrace.length).toBe(s.gapTrace.length);
+    expect(s.hrTrace[1]).toBe(120);
+    expect(s.staleHeartRateSec).toBeCloseTo(20 - SIM.staleHeartRateSec, 0);
   });
 });

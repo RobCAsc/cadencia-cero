@@ -47,6 +47,10 @@ export interface SessionRecord {
   bestInZoneRunSec?: number;
   /** Ventaja cada pocos segundos: el fantasma para la próxima vez con el mismo programa. */
   gapTrace?: number[];
+  /** Pulso en los mismos instantes que gapTrace, para diagnosticar una salida. */
+  hrTrace?: number[];
+  /** Segundos con la pulsera callada durante la salida. */
+  staleHeartRateSec?: number;
 }
 
 export interface SessionInput {
@@ -80,6 +84,8 @@ export function toSessionRecord(input: SessionInput): SessionRecord {
     ...(input.rpe !== undefined ? { rpe: input.rpe } : {}),
     ...(input.note ? { note: input.note } : {}),
     ...(s.gapTrace.length > 0 ? { gapTrace: [...s.gapTrace] } : {}),
+    ...(s.hrTrace.length > 0 ? { hrTrace: [...s.hrTrace] } : {}),
+    staleHeartRateSec: Math.round(s.staleHeartRateSec),
     bestInZoneRunSec: s.bestInZoneRunSec,
     avgHeartRateBpm: s.avgHeartRateBpm,
     peakHeartRateBpm: s.peakHeartRateBpm,

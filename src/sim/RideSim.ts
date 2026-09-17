@@ -11,7 +11,7 @@ import {
 } from './program';
 import { playerSpeedKph } from './speedTable';
 import type { CadenceSample, HeartRateSample, RideSummary, SimEvent, SimState } from './types';
-import { ceilingEffort, emptyZoneSec, floorEffort, zoneOf, zoneRange, type ZoneRange } from './zones';
+import { ceilingEffort, emptyZoneSec, floorEffort, zoneLabel, zoneOf, zoneRange, type ZoneRange } from './zones';
 
 export interface RideSimOptions {
   /** Qué entrada mueve al ciclista. Por defecto el pulso, la entrada real del proyecto. */
@@ -20,6 +20,8 @@ export interface RideSimOptions {
 }
 
 const EASY_KINDS = new Set(['warmup', 'recover', 'cooldown']);
+/** El empujón necesita que quede tramo continuo detrás de la cuenta atrás. */
+const PUSH_MIN_TAIL_SEC = 30;
 
 /**
  * El núcleo del juego: gap += (playerSpeed - zombieSpeed) * dt.
@@ -75,7 +77,14 @@ export class RideSim {
   private eased = false;
   /** El empujón opcional: uno por salida. */
   private pushUsed = false;
-  private push: { endSec: number; caughtBefore: number } | undefined;
+  private push: { endSec: number; caughtBefore: number; zoneMin: number; zoneSec: number } | undefined;
+  /**
+   * Ventana de asentamiento: al entrar a un tramo con techo más bajo, el
+   * techo efectivo baja en rampa desde el anterior (zoneSettleSec). El pulso
+   * no cae de golpe; el techo tampoco.
+   */
+  private settle: { fromCeiling: number; toCeiling: number; startSec: number } | undefined;
+  private settling = false;
 
   private cadenceRpmSec = 0; // ∫ rpm dt, para la cadencia media del resumen
   private heartRateBpmSec = 0; // ∫ bpm dt, para el pulso medio del resumen
@@ -94,6 +103,9 @@ export class RideSim {
   private peakBpm = 0;
   /** Ventaja muestreada cada gapTraceStepSec: el fantasma de la próxima vez. */
   private readonly gapTrace: number[] = [];
+  /** Pulso en los mismos instantes: para diagnosticar una salida con datos. */
+  private readonly hrTrace: number[] = [];
+  private staleHeartRateSec = 0;
   private nextTraceSec = 0;
   private lastSegmentIndex = -1;
   private warnedSegmentIndex = -1;
@@ -228,37 +240,40 @@ export class RideSim {
   }
 
   /**
-   * El empujón opcional: un tramo corto en la zona dada, insertado ahora
-   * dentro de un tramo continuo. Completarlo sin ser alcanzado suma ruta.
-   * Uno por salida; la escena decide cuándo y si ofrecerlo.
+   * El empujón opcional: un tramo corto en la zona dada, insertado dentro
+   * de un tramo continuo tras una cuenta atrás (el pulso necesita ese tiempo
+   * para llegar, igual que ante una oleada). La horda NO acelera: el empujón
+   * es del rider, no de la horda; solo sube su techo. Si llega a la zona los
+   * segundos que pide el bono, suma ruta; si no llega, no pierde nada. Uno
+   * por salida; la escena decide cuándo y si ofrecerlo.
    */
   insertPush(
     durationSec: number = this.cfg.push.durationSec,
     zone: ZoneRange = this.cfg.push.zone,
+    countdownSec: number = this.cfg.push.countdownSec,
   ): boolean {
-    if (this.ridePhase !== 'riding' || this.coolingDown || this.pushUsed) return false;
+    if (!this.pushFits(countdownSec)) return false;
     const idx = segmentIndexAt(this.segments, this.elapsedSec);
-    const cur = this.segments[idx];
-    if (!cur || cur.kind !== 'steady') return false;
-    const t = this.elapsedSec;
+    const cur = this.segments[idx]!;
+    const start = this.elapsedSec + countdownSec;
     const [zoneMin, zoneMax] = zoneRange(zone);
-    const before: ExpandedSegment = { ...cur, durationSec: t - cur.startSec, endSec: t };
+    const before: ExpandedSegment = { ...cur, durationSec: start - cur.startSec, endSec: start };
     const push: ExpandedSegment = {
       kind: 'push',
       durationSec,
       zone,
       zoneMin,
       zoneMax,
-      zombieSpeedKph: hordeSpeedForZone(zoneMin, zoneMax, this.cfg.effort),
-      cue: 'Empujón: un minuto en Z3',
-      startSec: t,
-      endSec: t + durationSec,
+      zombieSpeedKph: cur.zombieSpeedKph,
+      cue: `Empujón: un minuto en ${zoneLabel(zoneMin, zoneMax)}`,
+      startSec: start,
+      endSec: start + durationSec,
       sourceIndex: -1,
     };
     const after: ExpandedSegment = {
       ...cur,
-      durationSec: cur.endSec - t,
-      startSec: t + durationSec,
+      durationSec: cur.endSec - start,
+      startSec: push.endSec,
       endSec: cur.endSec + durationSec,
     };
     const rest = this.segments
@@ -267,8 +282,31 @@ export class RideSim {
     this.segments = [...this.segments.slice(0, idx), before, push, after, ...rest];
     this.totalSec += durationSec;
     this.pushUsed = true;
-    this.push = { endSec: push.endSec, caughtBefore: this.timesCaught };
+    this.push = { endSec: push.endSec, caughtBefore: this.timesCaught, zoneMin, zoneSec: 0 };
     return true;
+  }
+
+  /** Cabe un empujón ahora: tramo continuo, sin usar, y con tramo detrás de la cuenta atrás. */
+  private pushFits(countdownSec: number = this.cfg.push.countdownSec): boolean {
+    if (this.ridePhase !== 'riding' || this.coolingDown || this.pushUsed) return false;
+    const cur = this.segments[segmentIndexAt(this.segments, this.elapsedSec)];
+    return cur !== undefined && cur.kind === 'steady' && cur.endSec - this.elapsedSec >= countdownSec + PUSH_MIN_TAIL_SEC;
+  }
+
+  /**
+   * Techo efectivo del tramo: el prescrito, salvo dentro de la ventana de
+   * asentamiento, donde baja en rampa desde el techo del tramo anterior.
+   */
+  private effectiveCeiling(ceiling: number): number {
+    const s = this.settle;
+    if (!s) return ceiling;
+    const window = this.cfg.zoneSettleSec;
+    const k = window > 0 ? (this.elapsedSec - s.startSec) / window : 1;
+    if (k >= 1) {
+      this.settle = undefined;
+      return ceiling;
+    }
+    return Math.max(ceiling, s.fromCeiling + (s.toCeiling - s.fromCeiling) * k);
   }
 
   update(dtSec: number): SimEvent[] {
@@ -291,23 +329,37 @@ export class RideSim {
     // La horda despierta: parada al principio, a su ritmo al cabo de hordeWakeSec.
     if (this.cfg.hordeWakeSec > 0 && !feel) zKph *= Math.min(1, this.elapsedSec / this.cfg.hordeWakeSec);
     if (this.caughtGraceSec > 0) zKph *= this.cfg.catch.stumbleSpeedFactor;
+
+    // Zona prescrita por el tramo: bajo el piso te alcanzan (la horda corre a
+    // esa velocidad); sobre el techo la ventaja se congela. Recuperar bien es
+    // entrenar, y pasarse en un tramo suave no debe rendir. Los bordes llevan
+    // una tolerancia en latidos (lo que un sensor óptico no distingue) y el
+    // techo baja en rampa al entrar a un tramo más suave (el pulso también).
+    const heartRate = this.inputMode === 'heartRate';
+    const reserve = this.rider.hrMaxBpm - this.rider.hrRestBpm;
+    const edge = heartRate && reserve > 0 ? this.cfg.zoneEdgeBpm / reserve : 0;
+    const floor = curSeg ? floorEffort(curSeg.zoneMin) : 0;
+    const ceiling = curSeg ? ceilingEffort(curSeg.zoneMax) : Number.POSITIVE_INFINITY;
+    const effectiveCeiling = this.effectiveCeiling(ceiling);
+    const above = !feel && curSeg !== undefined && this.effortFrac >= effectiveCeiling + edge;
+    const settling = !feel && !above && curSeg !== undefined && this.effortFrac >= ceiling + edge;
+    const inZone = feel
+      ? curSeg !== undefined
+      : curSeg !== undefined && !above && this.effortFrac >= floor - edge;
+    this.aboveZone = above;
+    this.settling = settling;
+    // Bajo el piso, la tolerancia: tres latidos por debajo cuestan lo que el borde.
+    const drivingEffort =
+      this.effortFrac <= 0 || this.effortFrac >= floor ? this.effortFrac : Math.min(floor, this.effortFrac + edge);
+
     // Por sensación: el ciclista va al paso prescrito y la horda no gana nunca.
     // Enfriando o con el pulso pasado del máximo, la horda se para.
     const pKph = feel
       ? zKph
-      : this.inputMode === 'heartRate'
-        ? playerSpeedFromEffort(this.effortFrac, this.cfg.effort)
+      : heartRate
+        ? playerSpeedFromEffort(drivingEffort, this.cfg.effort)
         : playerSpeedKph(this.resistanceLevel, rpm, this.cfg.speed);
     if (this.coolingDown || this.easeOff) zKph = 0;
-
-    // Zona prescrita por el tramo: bajo el piso te alcanzan (la horda corre a
-    // esa velocidad); sobre el techo la ventaja se congela. Recuperar bien es
-    // entrenar, y pasarse en un tramo suave no debe rendir.
-    const above = !feel && curSeg !== undefined && this.effortFrac >= ceilingEffort(curSeg.zoneMax);
-    const inZone = feel
-      ? curSeg !== undefined
-      : curSeg !== undefined && !above && this.effortFrac >= floorEffort(curSeg.zoneMin);
-    this.aboveZone = above;
 
     // El juego entero es esta integral.
     let nextGap = this.gapM + ((pKph - zKph) / 3.6) * dt;
@@ -337,6 +389,7 @@ export class RideSim {
     // contradiga (o no vale, como con betabloqueantes).
     const zone = feel ? (curSeg?.zoneMin ?? 0) : zoneOf(this.effortFrac);
     this.zoneSec[zone] = (this.zoneSec[zone] ?? 0) + dt;
+    if (this.push && curSeg?.kind === 'push' && zone >= this.push.zoneMin) this.push.zoneSec += dt;
     if (inZone) this.inZoneSec += dt;
     if (above) this.aboveZoneSec += dt;
     this.inZoneRunSec = inZone ? this.inZoneRunSec + dt : 0;
@@ -346,6 +399,7 @@ export class RideSim {
     this.lastZombieKph = zKph;
     if (this.elapsedSec >= this.nextTraceSec) {
       this.gapTrace.push(Math.round(this.gapM));
+      this.hrTrace.push(Math.round(this.smoothedBpm));
       this.nextTraceSec += this.cfg.gapTraceStepSec;
     }
 
@@ -362,13 +416,24 @@ export class RideSim {
       } else if (prev?.kind === 'surge' && this.smoothedBpm > 0) {
         this.recovery = { endSec: this.elapsedSec, peakBpm: this.smoothedBpm };
       }
-      // El empujón completado sin captura suma ruta.
+      // El empujón: con los segundos en zona que pide el bono y sin captura,
+      // suma ruta; si el pulso no llegó a tiempo, nada ganado y nada perdido.
       if (prev?.kind === 'push' && this.push) {
-        if (this.timesCaught === this.push.caughtBefore) {
+        const zoneSec = this.push.zoneSec;
+        if (this.timesCaught === this.push.caughtBefore && zoneSec >= this.cfg.push.minZoneSec) {
           this.distanceM += this.cfg.push.bonusM;
-          events.push({ type: 'pushDone', bonusM: this.cfg.push.bonusM });
+          events.push({ type: 'pushDone', bonusM: this.cfg.push.bonusM, zoneSec });
+        } else {
+          events.push({ type: 'pushMissed', zoneSec });
         }
         this.push = undefined;
+      }
+      // Al bajar de techo (Z3 → Z2, oleada → recuperación, el empujón al
+      // acabar), la ventana de asentamiento: el techo baja en rampa.
+      if (prev && segment && this.inputMode === 'heartRate') {
+        const from = Math.min(1, this.effectiveCeiling(ceilingEffort(prev.zoneMax)));
+        const to = ceilingEffort(segment.zoneMax);
+        this.settle = to < from ? { fromCeiling: from, toCeiling: to, startSec: this.elapsedSec } : undefined;
       }
     }
     this.measureRecovery();
@@ -473,6 +538,7 @@ export class RideSim {
         this.hrStaleNotified = true;
         events.push({ type: 'staleHeartRate' });
       }
+      if (this.latestBpm > 0) this.staleHeartRateSec += dt;
       this.heldBpm = Math.max(
         this.rider.hrRestBpm,
         this.heldBpm - this.cfg.heartRateDecayBpmPerSec * dt,
@@ -518,11 +584,11 @@ export class RideSim {
       heartRateStale: this.hrSampleAgeSec > this.cfg.staleHeartRateSec,
       effortFrac: this.effortFrac,
       aboveZone: this.aboveZone,
+      settling: this.settling,
       easeOff: this.easeOff,
       coolingDown: this.coolingDown,
       eased: this.eased,
-      pushAvailable:
-        this.ridePhase === 'riding' && !this.coolingDown && !this.pushUsed && seg.kind === 'steady',
+      pushAvailable: this.pushFits(),
       inZoneRunSec: this.inZoneRunSec,
       playerSpeedKph: this.lastPlayerKph,
       zombieSpeedKph: this.lastZombieKph,
@@ -579,6 +645,8 @@ export class RideSim {
       aboveZoneSec: this.aboveZoneSec,
       recoveryDrops: [...this.recoveryDrops],
       gapTrace: [...this.gapTrace],
+      hrTrace: [...this.hrTrace],
+      staleHeartRateSec: this.staleHeartRateSec,
       bestInZoneRunSec: this.bestInZoneRunSec,
     };
   }

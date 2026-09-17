@@ -119,6 +119,14 @@ export interface PushConfig {
   zone: number | readonly [number, number];
   /** Ruta extra por completarlo sin ser alcanzado. */
   bonusM: number;
+  /**
+   * Cuenta atrás entre aceptar y empezar: el pulso necesita ese tiempo para
+   * llegar, igual que el aviso de una oleada. La horda NO acelera en el
+   * empujón: solo sube el techo del rider.
+   */
+  countdownSec: number;
+  /** Segundos en la zona del empujón (o más arriba) que ganan el bono. */
+  minZoneSec: number;
 }
 
 export interface CatchConfig {
@@ -183,8 +191,20 @@ export interface SimConfig {
   push: PushConfig;
   /** Enfriamiento que sustituye al resto del programa al pulsar Terminar. */
   quitCooldownSec: number;
-  /** Cada cuánto se muestrea la ventaja para el fantasma de la próxima vez. */
+  /** Cada cuánto se muestrea la ventaja (y el pulso) para el fantasma y el diagnóstico. */
   gapTraceStepSec: number;
+  /**
+   * Ventana de asentamiento: al entrar a un tramo con techo más bajo, el
+   * techo baja en rampa durante este tiempo en vez de caer de golpe. Un
+   * pulso de muñeca baja con τ ≈ 35 s; sin la ventana, salir de un Z3 a un
+   * Z2 congelaba la ventaja justo cuando la horda estaba más cerca (2026-09-17).
+   */
+  zoneSettleSec: number;
+  /**
+   * Tolerancia en latidos en el piso y el techo de la zona: lo que un sensor
+   * óptico no distingue. Tres latidos bajo el piso cuestan lo que el borde.
+   */
+  zoneEdgeBpm: number;
 }
 
 export const SIM: SimConfig = {
@@ -200,9 +220,10 @@ export const SIM: SimConfig = {
   maxDtSec: 0.25,
   // Se empieza a mitad del tope: la ventaja se gana pedaleando bien y se ve
   // subir. La horda despierta despacio para que el retraso del pulso al
-  // arrancar no cueste la salida.
+  // arrancar no cueste la salida: con 45 s, quien salía a 81 bpm tenía la
+  // horda a 6 m al minuto de calor (2026-09-17).
   initialGapM: 50,
-  hordeWakeSec: 45,
+  hordeWakeSec: 90,
   // Tope del colchón. Con 150 m, quien se salta las oleadas y recupera "bien"
   // rellena en la recuperación lo que perdió en la oleada y nunca es
   // atrapado; con 100 m el intervalo se hace cumplir (ver catalog.pulse.test).
@@ -232,9 +253,13 @@ export const SIM: SimConfig = {
     durationSec: 60,
     zone: 3,
     bonusM: 200,
+    countdownSec: 15,
+    minZoneSec: 20,
   },
   quitCooldownSec: 120,
   gapTraceStepSec: 5,
+  zoneSettleSec: 45,
+  zoneEdgeBpm: 3,
 };
 
 export const FAKE = {

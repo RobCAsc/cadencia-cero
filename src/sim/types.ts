@@ -61,6 +61,11 @@ export interface SimState {
   effortFrac: number;
   /** Por encima del techo de zona del tramo: la ventaja está congelada. */
   aboveZone: boolean;
+  /**
+   * Por encima del techo del tramo pero dentro de la ventana de asentamiento
+   * (el techo aún baja en rampa): el pulso viene bajando, la ventaja sigue viva.
+   */
+  settling: boolean;
   /** Pulso pasado del máximo del perfil: la horda está congelada y toca aflojar. */
   easeOff: boolean;
   /** Enfriamiento tras Terminar: la horda parada, el programa acaba en breve. */
@@ -106,6 +111,10 @@ export interface RideSummary {
   recoveryDrops: readonly number[];
   /** Ventaja (m) cada gapTraceStepSec: con ella la próxima vez corre tu fantasma. */
   gapTrace: readonly number[];
+  /** Pulso (bpm) en los mismos instantes que gapTrace: el diagnóstico de la salida. */
+  hrTrace: readonly number[];
+  /** Segundos con la pulsera callada (lectura caducada) durante la salida. */
+  staleHeartRateSec: number;
   /** Mejor racha de segundos seguidos dentro de la zona prescrita. */
   bestInZoneRunSec: number;
 }
@@ -116,7 +125,9 @@ export type SimEvent =
   | { type: 'surgeWarning'; inSec: number; toKph: number }
   | { type: 'overMax' }
   | { type: 'sustainedHigh'; sec: number }
-  | { type: 'pushDone'; bonusM: number }
+  | { type: 'pushDone'; bonusM: number; zoneSec: number }
+  /** El empujón acabó sin los segundos en zona que pide el bono: nada ganado, nada perdido. */
+  | { type: 'pushMissed'; zoneSec: number }
   | { type: 'staleCadence' }
   | { type: 'staleHeartRate' }
   | { type: 'healthDepleted' }

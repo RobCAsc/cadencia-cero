@@ -14,6 +14,7 @@ const cfg = (over: Partial<SimConfig> = {}): SimConfig => ({
   effort: EFFORT_LINEAR,
   heartRateSmoothingSec: 0, // sin suavizado salvo que el test lo pida
   hordeWakeSec: 0, // la horda arranca a su ritmo salvo que el test pida lo contrario
+  zoneEdgeBpm: 0, // los bordes se prueban exactos; la tolerancia tiene su propio test
   ...over,
 });
 
@@ -277,6 +278,32 @@ describe('RideSim en modo pulso', () => {
     expect(easy.summary().inZoneSec).toBeCloseTo(10, 0);
     beatFor(easy, 10, 115); // 55 %: por encima
     expect(easy.state.aboveZone).toBe(true);
+  });
+
+  it('tolerancia en latidos: tres bajo el piso cuestan lo que el borde, y tres sobre el techo no congelan', () => {
+    // Reserva 100 bpm: 3 latidos = 3 puntos. Tramo Z1 (50-60 %) con horda a 52.
+    const sim = new RideSim(
+      {
+        id: 't',
+        name: 't',
+        target: 't',
+        segments: [{ kind: 'recover', durationSec: 600, zone: 1, zombieSpeedKph: 52 }],
+      },
+      cfg({ initialGapM: 50, zoneEdgeBpm: 3 }),
+      now,
+      { inputMode: 'heartRate', rider },
+    );
+    beatFor(sim, 10, 107); // 47 %: dentro del margen → como en el piso, 50 contra 52
+    expect(sim.state.gapM).toBeCloseTo(50 - ((52 - 50) / 3.6) * 10, 0);
+    expect(sim.summary().inZoneSec).toBeCloseTo(10, 0);
+    const g = sim.state.gapM;
+    beatFor(sim, 10, 103); // 43 %: seis bajo el piso → como tres bajo, 46 contra 52
+    expect(sim.state.gapM).toBeCloseTo(g - ((52 - 46) / 3.6) * 10, 0);
+    expect(sim.summary().inZoneSec).toBeCloseTo(10, 0);
+    beatFor(sim, 10, 122); // 62 %: dos sobre el techo → no congela
+    expect(sim.state.aboveZone).toBe(false);
+    beatFor(sim, 10, 124); // 64 %: cuatro sobre → congela
+    expect(sim.state.aboveZone).toBe(true);
   });
 
   it('mide la recuperación cardíaca: cuánto baja el pulso en el minuto tras una oleada', () => {

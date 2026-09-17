@@ -43,6 +43,8 @@ const summary = (over: Partial<RideSummary> = {}): RideSummary => ({
   aboveZoneSec: 0,
   recoveryDrops: [],
   gapTrace: [],
+  hrTrace: [],
+  staleHeartRateSec: 0,
   bestInZoneRunSec: 0,
   ...over,
 });

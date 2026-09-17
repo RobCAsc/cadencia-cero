@@ -181,8 +181,11 @@ export class FinishPanel {
     });
     const beats = opts.mode === 'heartRate' ? heartbeats(s.avgHeartRateBpm, s.durationSec) : undefined;
     if (beats !== undefined) {
+      // La señal de la pulsera, en claro: sin ella no hay diagnóstico honesto.
+      const stale = Math.round(s.staleHeartRateSec);
+      const signal = stale > 0 ? `${stale} s sin señal de pulsera` : 'pulsera sin cortes';
       icon(g, 'heart', rightX + 8, zoneY + 24 + rows.length * 23 + 12, 14, INK_RED_HEX);
-      text(rightX + 22, zoneY + 24 + rows.length * 23 + 4, `latió unas ${fmtInt(beats)} veces`, 13, INK_MUTED);
+      text(rightX + 22, zoneY + 24 + rows.length * 23 + 4, `latió unas ${fmtInt(beats)} veces · ${signal}`, 13, INK_MUTED);
     }
 
     // ---- las tres preguntas ----

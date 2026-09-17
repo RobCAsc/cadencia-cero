@@ -161,6 +161,7 @@ export type IconName =
   | 'house'
   | 'compass'
   | 'snowflake'
+  | 'arrowDown'
   | 'warning';
 
 /**
@@ -340,6 +341,12 @@ export function icon(g: Phaser.GameObjects.Graphics, name: IconName, cx: number,
         const a = (i * Math.PI) / 3;
         g.lineBetween(cx - Math.cos(a) * s * 0.85, cy - Math.sin(a) * s * 0.85, cx + Math.cos(a) * s * 0.85, cy + Math.sin(a) * s * 0.85);
       }
+      break;
+    }
+    case 'arrowDown': {
+      g.lineBetween(cx, cy - s * 0.85, cx, cy + s * 0.8);
+      g.lineBetween(cx - s * 0.6, cy + s * 0.2, cx, cy + s * 0.8);
+      g.lineBetween(cx + s * 0.6, cy + s * 0.2, cx, cy + s * 0.8);
       break;
     }
     case 'warning': {

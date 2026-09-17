@@ -328,12 +328,15 @@ export class RideScene extends Phaser.Scene {
     if (state.elapsedSec < state.totalSec * PUSH_OFFER_AT) return;
     this.pushOffered = true;
     this.offer.show({
-      text: `¿Un empujón? Un minuto en Z3 a cambio de ${SIM.push.bonusM} m de Ruta.`,
+      text: `¿Un empujón? Un minuto en Z3 por ${SIM.push.bonusM} m de Ruta. La horda no acelera.`,
       yesLabel: 'Sí, vamos',
       noLabel: 'Hoy no',
       durationMs: OFFER_MS,
       onYes: () => {
-        if (this.sim.insertPush()) this.hud.setSegments(this.sim.currentSegments);
+        if (!this.sim.insertPush()) return;
+        this.hud.setSegments(this.sim.currentSegments);
+        // La cuenta atrás: el pulso necesita ese tiempo para llegar a Z3.
+        this.banner.showNotice(`Empujón en ${SIM.push.countdownSec} s: sube el ritmo`, SIM.push.countdownSec * 1000, GOLD);
       },
     });
   }
@@ -409,6 +412,15 @@ export class RideScene extends Phaser.Scene {
         break;
       case 'pushDone':
         if (!fastForward) this.banner.showNotice(`Empujón completado: +${event.bonusM} m de Ruta`, 4000, GOLD);
+        break;
+      case 'pushMissed':
+        if (!fastForward) {
+          this.banner.showNotice(
+            `Empujón: ${Math.round(event.zoneSec)} s en Z3, hacían falta ${SIM.push.minZoneSec}. Nada perdido.`,
+            5000,
+            UI.info,
+          );
+        }
         break;
       case 'finished': {
         proximityAudio.stop();
@@ -530,7 +542,10 @@ export class RideScene extends Phaser.Scene {
     this.horde.update(dt, state.gapM, state.zombieSpeedKph, state.caughtGraceSec > 0, slope);
     this.effects.update(state.playerSpeedKph / 3.6, dt, night01, danger01, slope);
     this.effects.updateHorde(this.horde.screenX, this.horde.run01, slope);
-    proximityAudio.update(state.gapM, this.horde.run01, dt);
+    // Con la ventaja congelada, asentándose o la horda parada, el latido no
+    // debe empujar a apretar más: la horda no gana.
+    const hordeCalm = state.aboveZone || state.settling || state.easeOff || state.coolingDown;
+    proximityAudio.update(state.gapM, this.horde.run01, dt, hordeCalm);
     bikeAudio.update(state.playerSpeedKph);
     ambientAudio.update(night01, Math.max(0, Math.min(1, (progress - 0.88) / 0.12)));
 
