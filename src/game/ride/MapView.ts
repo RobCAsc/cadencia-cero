@@ -184,9 +184,14 @@ export class MapView {
   private readonly bpmCaption: Phaser.GameObjects.Text;
   private segments: readonly ExpandedSegment[] = [];
   private totalSec = 1;
-  /** Velocidad suavizada para proyectar el amanecer: la instantánea baila y el sol con ella. */
-  private projKph = 0;
-  private lastElapsedSec = -1;
+  /**
+   * Dónde acaba la salida: los km que se cubren siguiendo el paso de la horda
+   * tramo a tramo (con el pequeño margen que un rider en zona le saca). Fijo
+   * mientras no cambie el programa: la carretera y el amanecer no se mueven;
+   * sobre ellos se mueven el ciclista y la horda.
+   */
+  private prescribedKm = 0;
+  private todayDirty = true;
   // Geometría.
   private readonly RY: number;
   private readonly HY: number;
@@ -255,6 +260,9 @@ export class MapView {
     this.segments = segments;
     const last = segments[segments.length - 1];
     this.totalSec = last ? last.endSec : 1;
+    // Un rider en el centro de la zona va un poco por delante de la horda: 8 %.
+    this.prescribedKm = segments.reduce((acc, s) => acc + (s.durationSec * (s.zombieSpeedKph / 3.6)) / 1000, 0) * 1.08;
+    this.todayDirty = true;
     this.profileObjects.forEach((o) => o.destroy());
     this.profileObjects = [];
     const { SX, SY, SW, SH } = this;
@@ -284,23 +292,17 @@ export class MapView {
     const remaining = Math.max(0, state.totalSec - state.elapsedSec);
     const beforeKm = this.overview?.beforeKm ?? this.routeBeforeKm();
     const kmNow = beforeKm + todayKm;
-    // El amanecer se proyecta con una velocidad que cambia despacio: arranca
-    // en la media de la salida y sigue a la instantánea con τ de minuto y medio.
-    if (this.lastElapsedSec < 0) {
-      const avgKph = state.elapsedSec > 30 ? (todayKm / state.elapsedSec) * 3600 : state.playerSpeedKph;
-      this.projKph = avgKph > 0 ? avgKph : state.playerSpeedKph;
-    } else {
-      const dt = Math.max(0, state.elapsedSec - this.lastElapsedSec);
-      this.projKph += (state.playerSpeedKph - this.projKph) * (1 - Math.exp(-dt / 90));
-    }
-    this.lastElapsedSec = state.elapsedSec;
-    const kmEnd = kmNow + (remaining * (this.projKph / 3.6)) / 1000;
+    // El amanecer está donde la salida acaba si sigues lo prescrito: fijo.
+    const kmEnd = beforeKm + this.prescribedKm;
 
-    // La Ruta se rehace cuando enciendes un refugio o el mapa se queda corto;
-    // la ventana de hoy, si la salida se sale de ella.
+    // La Ruta se rehace cuando enciendes un refugio o cambia el programa; la
+    // ventana de hoy, cuando cambia el programa o te sales de ella por delante.
     const needsRoute = !this.overview || kmEnd > this.overview.toKm || this.overview.refuges.filter((r) => r.km <= kmNow).length !== this.litCount;
     if (needsRoute) this.buildRoute(todayKm, kmEnd);
-    if (!this.todayWin || kmNow > this.todayWin.toKm - 0.25 || kmEnd > this.todayWin.toKm - 0.1) this.buildToday(beforeKm, kmNow, kmEnd);
+    if (this.todayDirty || !this.todayWin || kmNow > this.todayWin.toKm - 0.15) {
+      this.todayDirty = false;
+      this.buildToday(beforeKm, kmNow, kmEnd);
+    }
     const o = this.overview;
 
     setIfChanged(this.subtitle, `${this.programName} · ${formatMMSS(state.elapsedSec)} / ${formatMMSS(state.totalSec)} · ${km1(todayKm)} km hoy`);
