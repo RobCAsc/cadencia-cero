@@ -184,6 +184,9 @@ export class MapView {
   private readonly bpmCaption: Phaser.GameObjects.Text;
   private segments: readonly ExpandedSegment[] = [];
   private totalSec = 1;
+  /** Velocidad suavizada para proyectar el amanecer: la instantánea baila y el sol con ella. */
+  private projKph = 0;
+  private lastElapsedSec = -1;
   // Geometría.
   private readonly RY: number;
   private readonly HY: number;
@@ -281,12 +284,23 @@ export class MapView {
     const remaining = Math.max(0, state.totalSec - state.elapsedSec);
     const beforeKm = this.overview?.beforeKm ?? this.routeBeforeKm();
     const kmNow = beforeKm + todayKm;
-    const kmEnd = kmNow + (remaining * (state.playerSpeedKph / 3.6)) / 1000;
+    // El amanecer se proyecta con una velocidad que cambia despacio: arranca
+    // en la media de la salida y sigue a la instantánea con τ de minuto y medio.
+    if (this.lastElapsedSec < 0) {
+      const avgKph = state.elapsedSec > 30 ? (todayKm / state.elapsedSec) * 3600 : state.playerSpeedKph;
+      this.projKph = avgKph > 0 ? avgKph : state.playerSpeedKph;
+    } else {
+      const dt = Math.max(0, state.elapsedSec - this.lastElapsedSec);
+      this.projKph += (state.playerSpeedKph - this.projKph) * (1 - Math.exp(-dt / 90));
+    }
+    this.lastElapsedSec = state.elapsedSec;
+    const kmEnd = kmNow + (remaining * (this.projKph / 3.6)) / 1000;
 
-    // La Ruta se rehace cuando enciendes un refugio o el mapa se queda corto.
+    // La Ruta se rehace cuando enciendes un refugio o el mapa se queda corto;
+    // la ventana de hoy, si la salida se sale de ella.
     const needsRoute = !this.overview || kmEnd > this.overview.toKm || this.overview.refuges.filter((r) => r.km <= kmNow).length !== this.litCount;
     if (needsRoute) this.buildRoute(todayKm, kmEnd);
-    if (!this.todayWin || kmNow > this.todayWin.toKm - 0.3 || kmEnd > this.todayWin.toKm) this.buildToday(beforeKm, kmNow, kmEnd);
+    if (!this.todayWin || kmNow > this.todayWin.toKm - 0.25 || kmEnd > this.todayWin.toKm - 0.1) this.buildToday(beforeKm, kmNow, kmEnd);
     const o = this.overview;
 
     setIfChanged(this.subtitle, `${this.programName} · ${formatMMSS(state.elapsedSec)} / ${formatMMSS(state.totalSec)} · ${km1(todayKm)} km hoy`);
@@ -337,9 +351,11 @@ export class MapView {
       d.fillStyle(INK_RED_HEX, 0.12 + (k / 14) * 0.5);
       d.fillCircle(p.x, p.y, 9 + (k / 14) * 8);
     }
+    // La marea se mueve aunque la ventaja no cambie: los zombis se bambolean.
+    const wobble = this.scene.time.now / 1000;
     [0, -10, -20, -30, -44].forEach((dpx, i) => {
       const p = tr.atPx(fTide, dpx);
-      icon(d, 'zombie', p.x, p.y - 4, 18 - i * 2, INK_RED_HEX, 0.9 - i * 0.12);
+      icon(d, 'zombie', p.x, p.y - 4 + Math.sin(wobble * 3 + i) * 1.5, 18 - i * 2, INK_RED_HEX, 0.9 - i * 0.12);
     });
     const tideAt = tr.atPx(fTide, -26);
     this.tideLabel.setPosition(tideAt.x, tideAt.y + 30);
@@ -356,7 +372,8 @@ export class MapView {
     const you = tr.at(fNow);
     d.fillStyle(INK_GOLD_HEX, 0.35);
     d.fillCircle(you.x, you.y, 18);
-    icon(d, 'bike', you.x, you.y - 2, 30, INK_HEX);
+    // La bici pedalea: las ruedas giran con los metros, aunque en el papel avance despacio.
+    drawRollingBike(d, you.x, you.y - 2, 30, INK_HEX, (state.distanceM / 4) * Math.PI * 2);
     this.riderLabel.setPosition(you.x, you.y + 22);
     tr.dots(d, fNow, tw.frac(kmEnd), 2.5, INK_GOLD_HEX, 0.6);
     const end = tr.at(tw.frac(kmEnd));
@@ -519,7 +536,7 @@ export class MapView {
     this.todayObjects = [];
     const list = this.todayObjects;
     const o = this.overview;
-    this.todayWin = todayWindow(beforeKm, kmNow, kmEnd, o.longestRideKm);
+    this.todayWin = todayWindow(beforeKm, kmNow, kmEnd);
     const tw = this.todayWin;
     const { left, HY } = this;
     const X0 = left + 70;
@@ -533,11 +550,22 @@ export class MapView {
     const g = this.scene.add.graphics().setDepth(DEPTH + 2);
     list.push(g);
     road.draw(g, 14);
-    // Tu regla: la salida más larga, desde donde empezaste hoy.
+    // Marcas de km: con ellas se ve avanzar al ciclista.
+    const startX = road.at(tw.frac(beforeKm)).x;
+    for (let km = Math.ceil(tw.fromKm * 2) / 2; km <= tw.toKm; km += 0.5) {
+      const p = road.at(tw.frac(km));
+      const whole = Math.abs(km - Math.round(km)) < 1e-6;
+      g.lineStyle(1.5, INK_HEX, whole ? 0.7 : 0.4);
+      g.lineBetween(p.x, p.y + (whole ? 8 : 5), p.x, p.y + (whole ? 13 : 10));
+      if (whole && Math.abs(p.x - startX) > 46) this.text(p.x, p.y + 12, `${Math.round(km)}`, 9, INK_DIM, { align: 'center', mono: true, list });
+    }
+    // Tu regla: la salida más larga desde donde empezaste hoy; si no cabe, apunta al borde.
     if (o.longestRideKm > 0) {
-      road.dashed(g, tw.frac(beforeKm), tw.frac(beforeKm + o.longestRideKm), 2, INK_HEX, 0.55);
-      const e = road.at(tw.frac(beforeKm + o.longestRideKm));
-      this.text(e.x - 4, e.y + 24, `tu más larga: ${km1(o.longestRideKm)} km →`, 11, INK_MUTED, { align: 'right', list });
+      const endKm = beforeKm + o.longestRideKm;
+      const fits = endKm <= tw.toKm;
+      road.dashed(g, tw.frac(beforeKm), fits ? tw.frac(endKm) : 1, 2, INK_HEX, 0.55);
+      const e = road.at(fits ? tw.frac(endKm) : 1);
+      this.text(e.x - 4, e.y + 24, `tu más larga: ${km1(o.longestRideKm)} km${fits ? '' : ' →'}`, 11, INK_MUTED, { align: 'right', list });
     }
     // Donde empezaste hoy.
     const s = road.at(tw.frac(beforeKm));
@@ -573,6 +601,36 @@ export class MapView {
     (o.list ?? this.objects).push(t);
     return t;
   }
+}
+
+/** La bici del mapa con las ruedas girando: radios a un ángulo que avanza con la distancia. */
+function drawRollingBike(g: Phaser.GameObjects.Graphics, cx: number, cy: number, size: number, color: number, angle: number): void {
+  const s = size / 2;
+  const lw = Math.max(1.5, size / 11);
+  g.lineStyle(lw, color, 1);
+  g.fillStyle(color, 1);
+  const wheels: Array<[number, number]> = [
+    [cx - s * 0.6, cy + s * 0.35],
+    [cx + s * 0.6, cy + s * 0.35],
+  ];
+  for (const [wx, wy] of wheels) {
+    g.strokeCircle(wx, wy, s * 0.42);
+    for (let k = 0; k < 3; k++) {
+      const a = angle + (k * Math.PI * 2) / 3;
+      g.lineBetween(wx, wy, wx + Math.cos(a) * s * 0.38, wy + Math.sin(a) * s * 0.38);
+    }
+  }
+  g.beginPath();
+  g.moveTo(cx - s * 0.6, cy + s * 0.35);
+  g.lineTo(cx - s * 0.15, cy - s * 0.3);
+  g.lineTo(cx + s * 0.35, cy - s * 0.3);
+  g.lineTo(cx + s * 0.6, cy + s * 0.35);
+  g.moveTo(cx - s * 0.15, cy - s * 0.3);
+  g.lineTo(cx + s * 0.05, cy + s * 0.35);
+  g.lineTo(cx + s * 0.6, cy + s * 0.35);
+  g.moveTo(cx + s * 0.35, cy - s * 0.3);
+  g.lineTo(cx + s * 0.25, cy - s * 0.65);
+  g.strokePath();
 }
 
 function segName(kind: string, grade?: number): string {

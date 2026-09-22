@@ -71,14 +71,14 @@ describe('el diario de la Ruta', () => {
     expect(o.toKm).toBe(25);
   });
 
-  it('la ventana de hoy cabe la salida, la regla de la más larga y un margen', () => {
-    const w = todayWindow(11, 12, 13.9, 8);
-    expect(w.fromKm).toBeCloseTo(10.6, 5);
-    expect(w.toKm).toBeCloseTo(19.4, 5);
-    expect(w.frac(10.6)).toBe(0);
-    expect(w.frac(19.4)).toBe(1);
-    expect(w.frac(15)).toBeCloseTo(4.4 / 8.8, 5);
-    // Sin salida más larga, manda el final previsto.
-    expect(todayWindow(0, 0.2, 5, 0).toKm).toBeCloseTo(5.4, 5);
+  it('la ventana de hoy es la salida de hoy con un margen, y nada más ancha', () => {
+    const w = todayWindow(11, 12, 13.9);
+    expect(w.fromKm).toBeCloseTo(10.7, 5);
+    expect(w.toKm).toBeCloseTo(14.2, 5);
+    expect(w.frac(10.7)).toBeCloseTo(0, 5);
+    expect(w.frac(14.2)).toBeCloseTo(1, 5);
+    expect(w.frac(12.45)).toBeCloseTo(0.5, 5);
+    // Si ya vas más allá de lo previsto, la ventana te sigue.
+    expect(todayWindow(0, 5.5, 5).toKm).toBeCloseTo(6.1, 5);
   });
 });

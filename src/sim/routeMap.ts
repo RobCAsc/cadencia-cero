@@ -137,12 +137,15 @@ export interface TodayWindow {
 }
 
 /**
- * La ventana del trozo de hoy: desde donde empezaste hasta donde acabas, o
- * hasta tu salida más larga si es más lejos (la regla tiene que caber).
+ * La ventana del trozo de hoy: desde donde empezaste hasta donde calculo que
+ * acabas, y nada más. Cuanto más ancha, menos se mueve el ciclista: con la
+ * salida más larga dentro, un Fondo de 33 minutos daba medio píxel por
+ * segundo y el rider parecía clavado (2026-09-22). La regla de la más larga
+ * apunta al borde cuando no cabe.
  */
-export function todayWindow(startKm: number, nowKm: number, plannedEndKm: number, longestRideKm: number, marginKm = 0.4): TodayWindow {
+export function todayWindow(startKm: number, nowKm: number, plannedEndKm: number, marginKm = 0.3): TodayWindow {
   const fromKm = Math.max(0, startKm - marginKm);
-  const toKm = Math.max(plannedEndKm, startKm + longestRideKm, nowKm + 0.5) + marginKm;
+  const toKm = Math.max(plannedEndKm, nowKm + 0.3) + marginKm;
   const span = Math.max(0.1, toKm - fromKm);
   return { fromKm, toKm, frac: (km) => Math.min(1, Math.max(0, (km - fromKm) / span)) };
 }
