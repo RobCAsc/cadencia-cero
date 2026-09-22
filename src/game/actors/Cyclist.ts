@@ -7,15 +7,28 @@ import { slopeRotation } from '../gapMapping';
 // el faro delantero corta la noche. Cuando dejas de pedalear, se queda quieto
 // respirando — y la horda sigue caminando.
 
-// Dos tonos más claros que el fondo cercano (0x06070f) y que el asfalto: el
-// rider se leía como una sombra más. Encima, un borde de luz de luna en la
-// silueta, bandas reflectantes y un charco de luz detrás, como la horda.
-const BODY = 0x2e3d63;
-const JACKET = 0x4d629a;
-const BIKE = 0x3f5384;
-const RIM = 0x7f96c4;
+// Ropa de superviviente (2026-09-22): parka verde oliva gastada, pantalón
+// caqui, botas, pañuelo rojo al cuello, casco polvoriento con cinta y un
+// frontal, mochila con banda reflectante y una palanca asomando, guante y una
+// venda en el brazo. Antes iba todo de azul y se leía como una sombra más.
+// Los tonos son más claros que el fondo cercano (0x06070f) y el asfalto, y
+// encima va un borde de luz de luna en la silueta, bandas reflectantes y un
+// charco de luz detrás, como la horda: eso es lo que lo separa de la noche.
+const SKIN = 0xd9a98a;
+const JACKET = 0x6f7546;
+const JACKET_DARK = 0x4f5432;
+const TROUSERS = 0x8a7454;
+const TROUSERS_DARK = 0x5e4d38;
+const BOOTS = 0x3a2c22;
+const BANDANA = 0xb33a2e;
+const HELMET = 0x8b8378;
+const TAPE = 0xd9d0b8;
+const BACKPACK = 0x5a5e4c;
+const METAL = 0x9aa0a8;
+const BANDAGE = 0xe6ddc9;
+const BIKE = 0x6e563f;
+const RIM = 0x9c9a92;
 const TIRE = 0x1b2238;
-const ACCENT = 0x5ff0dc;
 const REAR_LIGHT = 0xff4444;
 const LIGHT = 0xffe9b0;
 /** Luz de luna en el borde de la silueta y en lo reflectante. */
@@ -144,11 +157,13 @@ export class Cyclist {
     g.lineStyle(2.5, BIKE, 0.8);
     g.lineBetween(BB.x, BB.y, pedalFar.x, pedalFar.y);
     const kneeFar = solveKnee(hip, pedalFar, THIGH, SHIN);
-    g.lineStyle(4.5, BODY, 0.7);
+    g.lineStyle(4.5, TROUSERS_DARK, 0.85);
     g.lineBetween(hip.x, hip.y, kneeFar.x, kneeFar.y);
     g.lineBetween(kneeFar.x, kneeFar.y, pedalFar.x, pedalFar.y);
+    g.fillStyle(BOOTS, 0.85);
+    g.fillEllipse(pedalFar.x + 1, pedalFar.y - 1.5, 7, 4);
     g.fillStyle(REFLECTIVE, 0.6);
-    g.fillCircle(pedalFar.x, pedalFar.y - 3, 1.6); // banda reflectante del tobillo lejano
+    g.fillCircle(pedalFar.x, pedalFar.y - 4, 1.6); // banda reflectante del tobillo lejano
 
     // Ruedas.
     for (const axle of [REAR_AXLE, FRONT_AXLE]) {
@@ -180,8 +195,8 @@ export class Cyclist {
     g.lineBetween(SEAT.x, SEAT.y, HEAD_TUBE.x, HEAD_TUBE.y);
     g.lineBetween(HEAD_TUBE.x, HEAD_TUBE.y, BAR.x, BAR.y);
     g.lineBetween(BAR.x, BAR.y, BAR.x + 4, BAR.y + 5);
-    // Sillín y luz trasera parpadeante.
-    g.lineStyle(3.5, BODY, 1);
+    // Sillín de cuero y luz trasera parpadeante.
+    g.lineStyle(3.5, BOOTS, 1);
     g.lineBetween(SEAT.x - 5, SEAT.y - 1, SEAT.x + 3, SEAT.y - 1);
     g.fillStyle(REAR_LIGHT, Math.sin(this.tAlive * 7) > 0 ? 1 : 0.15);
     g.fillCircle(SEAT.x - 6, SEAT.y + 4, 1.8);
@@ -192,12 +207,25 @@ export class Cyclist {
     g.lineStyle(2, TIRE, 1);
     g.lineBetween(pedalNear.x - 3, pedalNear.y, pedalNear.x + 3, pedalNear.y);
 
-    // Chaqueta: ondea hacia atrás con la velocidad.
+    // El faldón de la parka ondea hacia atrás con la velocidad.
     const flap = Math.min(1, this.speedMps / 9);
     const wave = Math.sin(this.tAlive * 15) * 2 * flap;
     const jacketTail: Point = { x: hip.x - 9 - flap * 8, y: hip.y - 8 + wave };
-    g.fillStyle(JACKET, 0.9);
+    g.fillStyle(JACKET_DARK, 0.95);
     g.fillTriangle(shoulder.x - 4, shoulder.y + 2, hip.x - 3, hip.y - 2, jacketTail.x, jacketTail.y);
+
+    // La mochila, a la espalda, con su banda reflectante y la palanca asomando.
+    const packX = (hip.x - 4 + shoulder.x - 5) / 2 - 5;
+    const packY = (hip.y + shoulder.y - 2) / 2 + 1;
+    g.lineStyle(2.2, METAL, 0.95);
+    g.lineBetween(packX - 1, packY + 6, packX - 7, packY - 19);
+    g.lineBetween(packX - 7, packY - 19, packX - 10, packY - 16);
+    g.fillStyle(BACKPACK, 1);
+    g.fillRoundedRect(packX - 6, packY - 10, 12, 21, 3);
+    g.lineStyle(1.2, JACKET_DARK, 0.8);
+    g.strokeRoundedRect(packX - 6, packY - 10, 12, 21, 3);
+    g.lineStyle(1.6, REFLECTIVE, 0.8);
+    g.lineBetween(packX - 5, packY + 3, packX + 5, packY + 1);
 
     const kneeNear = solveKnee(hip, pedalNear, THIGH, SHIN);
     const elbow: Point = {
@@ -226,35 +254,56 @@ export class Cyclist {
     g.strokeCircle(headX, headY - 0.5, 7.4);
     g.strokeTriangle(shoulder.x - 4, shoulder.y + 2, hip.x - 3, hip.y - 2, jacketTail.x, jacketTail.y);
 
-    // Torso.
-    g.fillStyle(BODY, 1);
+    // Torso: la parka, con la correa de la mochila cruzando el pecho y un remiendo.
+    g.fillStyle(JACKET, 1);
     g.fillPoints(torso, true);
-    // Banda reflectante en la espalda, como la de cualquier chaleco.
-    g.lineStyle(1.6, REFLECTIVE, 0.75);
-    g.lineBetween(hip.x - 2, hip.y - 12, shoulder.x - 3, shoulder.y + 6);
+    g.lineStyle(1.8, BACKPACK, 0.9);
+    g.lineBetween(shoulder.x - 2, shoulder.y + 1, hip.x + 3, hip.y - 4);
+    g.fillStyle(JACKET_DARK, 0.9);
+    g.fillRect(hip.x - 1, hip.y - 10, 4, 3);
 
-    // Pierna cercana, con banda reflectante en el tobillo.
-    g.lineStyle(5, BODY, 1);
+    // Pierna cercana: pantalón caqui, bota, y la banda reflectante en el tobillo.
+    g.lineStyle(5, TROUSERS, 1);
     g.lineBetween(hip.x, hip.y, kneeNear.x, kneeNear.y);
     g.lineBetween(kneeNear.x, kneeNear.y, pedalNear.x, pedalNear.y);
+    g.lineStyle(1.4, TROUSERS_DARK, 0.9);
+    g.lineBetween(kneeNear.x - 2, kneeNear.y + 1, kneeNear.x + 2, kneeNear.y + 2); // el roto de la rodilla
+    g.fillStyle(BOOTS, 1);
+    g.fillEllipse(pedalNear.x + 1, pedalNear.y - 1.5, 8, 4.5);
     g.fillStyle(REFLECTIVE, 0.95);
-    g.fillCircle(pedalNear.x, pedalNear.y - 3, 1.9);
+    g.fillCircle(pedalNear.x, pedalNear.y - 4.5, 1.9);
 
-    // Brazo al manillar: cuanto más recogido, más doblado el codo.
-    g.lineStyle(3.5, BODY, 1);
+    // Brazo al manillar: manga de la parka, venda en el antebrazo, guante en el puño.
+    g.lineStyle(3.5, JACKET, 1);
     g.lineBetween(shoulder.x, shoulder.y, elbow.x, elbow.y);
     g.lineBetween(elbow.x, elbow.y, BAR.x, BAR.y);
+    const mid: Point = { x: (elbow.x + BAR.x) / 2, y: (elbow.y + BAR.y) / 2 };
+    g.lineStyle(3.8, BANDAGE, 0.95);
+    g.lineBetween(mid.x - 1.5, mid.y - 1, mid.x + 1.5, mid.y + 1);
+    g.fillStyle(BOOTS, 1);
+    g.fillCircle(BAR.x, BAR.y, 2.4);
 
-    // Cabeza con casco: recogido, la cabeza baja y mira al asfalto.
-    g.fillStyle(BODY, 1);
+    // Cabeza: cara, pañuelo rojo al cuello que ondea, casco polvoriento con
+    // cinta y un frontal. Recogido, la cabeza baja y mira al asfalto.
+    const neck: Point = { x: shoulder.x + 4, y: shoulder.y - 3 };
+    g.fillStyle(BANDANA, 0.95);
+    g.fillTriangle(neck.x, neck.y - 2, neck.x - 8 - flap * 7, neck.y - 5 + wave, neck.x - 4, neck.y + 3);
+    g.fillStyle(SKIN, 1);
     g.fillCircle(headX, headY, 6);
-    g.fillStyle(JACKET, 1);
+    g.fillStyle(BANDANA, 1);
+    g.fillEllipse(headX - 2, headY + 5, 9, 3.5);
+    g.fillStyle(HELMET, 1);
     g.beginPath();
     g.arc(headX, headY - 1.5, 7, Math.PI, 0, false);
     g.fillPath();
-    g.lineStyle(1.6, ACCENT, 1);
-    g.beginPath();
-    g.arc(headX, headY - 1.5, 5.2, Math.PI * 1.15, Math.PI * 1.85, false);
-    g.strokePath();
+    g.lineStyle(1.4, TAPE, 0.9);
+    g.lineBetween(headX - 3, headY - 6.5, headX - 1, headY - 2);
+    g.lineStyle(1, BOOTS, 0.8);
+    g.lineBetween(headX + 5, headY - 1, headX + 3, headY + 5); // la correa
+    // El frontal: un punto de luz y su haz corto, además del faro de la bici.
+    g.fillStyle(LIGHT, 0.14);
+    g.fillTriangle(headX + 6, headY - 3, headX + 40, headY - 12, headX + 40, headY + 4);
+    g.fillStyle(LIGHT, 1);
+    g.fillCircle(headX + 6, headY - 3, 1.6);
   }
 }
