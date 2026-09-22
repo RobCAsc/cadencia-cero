@@ -7,7 +7,7 @@ import { expandProgram, totalDurationSec, type TrainingProgram } from '../../sim
 import { applyAdjustments, PROGRAM_CATALOG } from '../../sim/programs/catalog';
 import { OLEADAS } from '../../sim/programs/oleadas';
 import { RideSim } from '../../sim/RideSim';
-import { preRideRestReadings, readiness, weekStartMs, type PlanPhase } from '../../sim/progress';
+import { nextRefuge, preRideRestReadings, readiness, routeProgress, weekStartMs, type PlanPhase } from '../../sim/progress';
 import {
   applyAdvice,
   calibrationAdvice,
@@ -36,6 +36,7 @@ import { ResistanceControl } from '../hud/ResistanceControl';
 import { Atmosphere } from '../atmosphere';
 import { CalmPanel } from '../ride/CalmPanel';
 import { FinishPanel } from '../ride/FinishPanel';
+import { MapView } from '../ride/MapView';
 import { UI } from '../theme';
 import { releaseWakeLock } from '../wakeLock';
 
@@ -82,6 +83,10 @@ export class RideScene extends Phaser.Scene {
   private program!: TrainingProgram;
   private startedAtMs = 0;
   private calm: CalmPanel | undefined;
+  /** La vista de mapa, mientras está abierta. */
+  private mapView: MapView | undefined;
+  /** Km de la Ruta antes de hoy: donde empieza el trozo de hoy en el mapa. */
+  private kmBeforeToday = 0;
   private preRideRestBpm: number | undefined;
   /** Dónde ibas la última vez con este programa, cada gapTraceStepSec. */
   private ghostTrace: readonly number[] | undefined;
@@ -113,6 +118,8 @@ export class RideScene extends Phaser.Scene {
     this.rpe = undefined;
     this.note = undefined;
     this.ghostTrace = this.findGhostTrace(program, inputMode);
+    this.mapView = undefined;
+    this.kmBeforeToday = routeProgress(this.history()).totalKm;
 
     this.atmosphere = new Atmosphere(this);
 
@@ -126,7 +133,11 @@ export class RideScene extends Phaser.Scene {
     ambientAudio.start();
     bikeAudio.start();
 
-    this.hud = new Hud(this, { segments: expandProgram(program), onQuit: () => this.onQuitTap() });
+    this.hud = new Hud(this, {
+      segments: expandProgram(program),
+      onQuit: () => this.onQuitTap(),
+      onMap: () => this.toggleMap(),
+    });
     this.banner = new CueBanner(this, (finalPip) => gameAudio.playPip(finalPip));
     this.offer = new OfferBanner(this);
     // La resistencia declarada solo mueve al ciclista en modo cadencia; en
@@ -286,7 +297,7 @@ export class RideScene extends Phaser.Scene {
       this.quitting = true;
       this.offer.hide();
       this.sim.beginCooldown();
-      this.hud.setSegments(this.sim.currentSegments);
+      this.segmentsChanged();
       return;
     }
     this.sim.endNow();
@@ -294,6 +305,33 @@ export class RideScene extends Phaser.Scene {
 
   adjustResistance(delta: number): void {
     this.sim.setResistance(this.sim.state.resistanceLevel + delta);
+  }
+
+  /** Los tramos vigentes cambiaron (enfriamiento, empujón, resto en suave): la HUD y el mapa los siguen. */
+  private segmentsChanged(): void {
+    const segments = this.sim.currentSegments;
+    this.hud.setSegments(segments);
+    this.mapView?.setSegments(segments);
+  }
+
+  /** La vista de mapa: un toque la abre, otro (o "Volver a la carretera") la cierra. */
+  private toggleMap(): void {
+    if (this.finishedShown || this.calm) return;
+    if (this.mapView) {
+      this.closeMap();
+      return;
+    }
+    this.mapView = new MapView(this, {
+      programName: this.program.name,
+      segments: this.sim.currentSegments,
+      kmBeforeToday: this.kmBeforeToday,
+      onClose: () => this.closeMap(),
+    });
+  }
+
+  private closeMap(): void {
+    this.mapView?.destroy();
+    this.mapView = undefined;
   }
 
   /**
@@ -334,7 +372,7 @@ export class RideScene extends Phaser.Scene {
       durationMs: OFFER_MS,
       onYes: () => {
         if (!this.sim.insertPush()) return;
-        this.hud.setSegments(this.sim.currentSegments);
+        this.segmentsChanged();
         // La cuenta atrás: el pulso necesita ese tiempo para llegar a Z3.
         this.banner.showNotice(`Empujón en ${SIM.push.countdownSec} s: sube el ritmo`, SIM.push.countdownSec * 1000, GOLD);
       },
@@ -344,7 +382,7 @@ export class RideScene extends Phaser.Scene {
   /** El resto de la salida en suave, con la línea de tiempo al día. */
   private easeRest(): void {
     this.sim.easeRemaining();
-    this.hud.setSegments(this.sim.currentSegments);
+    this.segmentsChanged();
   }
 
   private handleEvent(event: SimEvent, fastForward: boolean): void {
@@ -464,6 +502,7 @@ export class RideScene extends Phaser.Scene {
     if (this.finishedShown) return;
     this.finishedShown = true;
     this.hud.hideQuit();
+    this.closeMap();
     this.offer.hide();
     releaseWakeLock(); // sesión terminada: la pantalla ya puede dormirse
     if (completed) gameAudio.playFinish();
@@ -569,7 +608,11 @@ export class RideScene extends Phaser.Scene {
     camera.setZoom(camera.zoom + (targetZoom - camera.zoom) * Math.min(1, dt * 3));
     camera.scrollY = crankRpm > 5 ? Math.sin(this.cyclist.crank * 2) * 1.3 : 0;
 
-    this.hud.update(state, { ghostDeltaM });
+    // La Ruta sigue durante la salida: el siguiente refugio y lo que falta hasta él.
+    const kmNow = this.kmBeforeToday + state.distanceM / 1000;
+    const refuge = nextRefuge(kmNow);
+    this.hud.update(state, { ghostDeltaM, refuge: { name: refuge.name, distanceM: (refuge.km - kmNow) * 1000 } });
+    this.mapView?.update(state, { ghostDeltaM });
     this.banner.update(state);
     this.resistanceCtl?.update(state.resistanceLevel);
   }

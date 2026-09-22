@@ -190,13 +190,20 @@ export interface RouteProgress {
   remainingKm: number;
 }
 
-function refugeAt(index: number): Refuge {
+export function refugeAt(index: number): Refuge {
   const known = REFUGES[index];
   if (known) return known;
   // Más allá de la lista, un refugio cada 500 km.
   const lastKnown = REFUGES[REFUGES.length - 1] ?? { km: 0, name: 'Refugio' };
   const extra = index - REFUGES.length + 1;
   return { km: lastKnown.km + 500 * extra, name: `Refugio ${index + 1}` };
+}
+
+/** El primer refugio por delante de un km de la Ruta (el que está justo en ese km ya se alcanzó). */
+export function nextRefuge(totalKm: number): Refuge {
+  let i = 0;
+  while (totalKm >= refugeAt(i).km) i += 1;
+  return refugeAt(i);
 }
 
 export function routeProgress(sessions: readonly SessionRecord[]): RouteProgress {

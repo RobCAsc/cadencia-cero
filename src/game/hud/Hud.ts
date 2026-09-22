@@ -6,8 +6,10 @@ import { talkTestCue, zoneLabel, zoneOf } from '../../sim/zones';
 import { formatMMSS } from '../format';
 import { FONT_MONO, FONT_SANS, KIND_COLOR, UI, ZONE_COLOR } from '../theme';
 import { makeTextButton, type TapButton } from '../uiButton';
+import { makeIconButton, type IconButton } from '../ui/iconButton';
 import { icon, type IconName } from '../ui/paper';
 import { KIND_ES } from './KindNames';
+import { MapStrip, type MapStripExtras } from './MapStrip';
 
 export { KIND_ES };
 
@@ -27,22 +29,22 @@ const ZONE_Y = 130;
 const ZONE_W = 300;
 const ZONE_H = 14;
 const ZONE_GAP = 3;
-const TIMELINE_X = 340;
-const TIMELINE_Y = 170;
-const TIMELINE_W = 600;
-const TIMELINE_H = 26;
+/** La tira de mapa: donde iba la barra de tramos, bajo el número de ventaja. */
+const STRIP_X = 340;
+const STRIP_Y = 172;
+const STRIP_W = 620;
+const STRIP_H = 44;
 const QUIT_ARM_MS = 3000;
-const GOLD = '#d9b06a';
 
 export interface HudOptions {
   segments: readonly ExpandedSegment[];
   onQuit: () => void;
+  /** Abrir o cerrar la vista de mapa. */
+  onMap?: () => void;
 }
 
-export interface HudExtras {
-  /** Tu ventaja menos la del fantasma en este minuto (positivo = vas por delante de la última vez). */
-  ghostDeltaM?: number;
-}
+/** Lo que la HUD enseña y el sim no sabe: el fantasma y la Ruta. */
+export type HudExtras = MapStripExtras;
 
 /**
  * Lectura del estado, nada más: el gap gigante al centro es el protagonista.
@@ -54,7 +56,6 @@ export class Hud {
   private readonly gapText: Phaser.GameObjects.Text;
   private readonly gapLabel: Phaser.GameObjects.Text;
   private readonly hordeSpeedText: Phaser.GameObjects.Text;
-  private readonly ghostText: Phaser.GameObjects.Text;
   private readonly cadenceText: Phaser.GameObjects.Text;
   private readonly statsText: Phaser.GameObjects.Text;
   private readonly rightText: Phaser.GameObjects.Text;
@@ -66,12 +67,9 @@ export class Hud {
   private lastHealthPct = -1;
   private readonly zoneBar: Phaser.GameObjects.Graphics;
   private readonly zoneCaption: Phaser.GameObjects.Text;
-  private readonly timeline: Phaser.GameObjects.Graphics;
-  private readonly playhead: Phaser.GameObjects.Graphics;
+  private readonly strip: MapStrip;
   private readonly quitButton: TapButton;
-  private segments: readonly ExpandedSegment[];
-  private totalSec: number;
-  private maxKph: number;
+  private readonly mapButton: IconButton;
   private quitArmedUntil = 0;
   private cooling = false;
 
@@ -79,11 +77,6 @@ export class Hud {
     private readonly scene: Phaser.Scene,
     opts: HudOptions,
   ) {
-    this.segments = opts.segments;
-    const last = opts.segments[opts.segments.length - 1];
-    this.totalSec = last ? last.endSec : 1;
-    this.maxKph = Math.max(1, ...opts.segments.map((s) => s.zombieSpeedKph));
-
     const cx = RENDER.width / 2;
     this.gapText = scene.add
       .text(cx, 18, '', { fontFamily: FONT_MONO, fontSize: '84px', fontStyle: 'bold', color: UI.good })
@@ -95,10 +88,6 @@ export class Hud {
       .setDepth(10);
     this.hordeSpeedText = scene.add
       .text(cx, 140, '', { fontFamily: FONT_SANS, fontSize: '16px', color: UI.textDim })
-      .setOrigin(0.5, 0)
-      .setDepth(10);
-    this.ghostText = scene.add
-      .text(cx, 206, '', { fontFamily: FONT_SANS, fontSize: '16px', color: GOLD })
       .setOrigin(0.5, 0)
       .setDepth(10);
 
@@ -118,10 +107,8 @@ export class Hud {
       .text(ZONE_X, ZONE_Y + ZONE_H + 8, '', { fontFamily: FONT_SANS, fontSize: '15px', color: UI.textMuted, wordWrap: { width: 300 } })
       .setDepth(10);
 
-    // Línea de tiempo del programa: el perfil de la horda con un cabezal.
-    this.timeline = scene.add.graphics().setDepth(10);
-    this.drawTimeline();
-    this.playhead = scene.add.graphics().setDepth(11);
+    // La tira de mapa: lo de detrás en metros, lo que viene en minutos.
+    this.strip = new MapStrip(scene, STRIP_X, STRIP_Y, STRIP_W, STRIP_H, 10, opts.segments);
 
     // El tramo: su icono y lo que le queda, grande; debajo, lo que sigue y el total.
     this.segmentGlyph = scene.add.graphics().setDepth(10);
@@ -142,18 +129,17 @@ export class Hud {
 
     this.quitButton = makeTextButton(scene, RENDER.width - 24 - 90, 138, 180, 44, 'Terminar', () => this.onQuitTap(opts.onQuit), 10, 18);
     this.quitButton.rect.setAlpha(0.7);
+    // La vista de mapa, junto a Terminar.
+    this.mapButton = makeIconButton(scene, RENDER.width - 24 - 180 - 8 - 48, 138, 96, 44, 'map', 'Mapa', () => opts.onMap?.(), 10, 16);
+    this.mapButton.rect.setAlpha(0.7);
 
     // La salud: cinco corazones; cada captura apaga uno.
     this.hearts = scene.add.graphics().setDepth(10);
   }
 
-  /** Los tramos cambian con el enfriamiento, el empujón o el resto en suave: la línea de tiempo se rehace. */
+  /** Los tramos cambian con el enfriamiento, el empujón o el resto en suave: la tira los sigue. */
   setSegments(segments: readonly ExpandedSegment[]): void {
-    this.segments = segments;
-    const last = segments[segments.length - 1];
-    this.totalSec = last ? last.endSec : 1;
-    this.maxKph = Math.max(1, ...segments.map((s) => s.zombieSpeedKph));
-    this.drawTimeline();
+    this.strip.setSegments(segments);
   }
 
   update(state: SimState, extras: HudExtras = {}): void {
@@ -201,14 +187,6 @@ export class Hud {
           ? 'la horda despierta…'
           : `horda a ${state.zombieSpeedKph.toFixed(0)} km/h`,
     );
-    if (extras.ghostDeltaM === undefined) {
-      this.ghostText.setText('');
-    } else {
-      const d = Math.round(extras.ghostDeltaM);
-      this.ghostText.setText(d >= 0 ? `fantasma: vas ${d} m por delante de la última vez` : `fantasma: ${-d} m por detrás de la última vez`);
-      this.ghostText.setColor(d >= 0 ? GOLD : UI.textMuted);
-    }
-
     const feel = state.inputMode === 'feel';
     const heartRate = state.inputMode === 'heartRate' || (!feel && state.heartRateBpm > 0);
     const hg = this.heartGlyph;
@@ -240,7 +218,7 @@ export class Hud {
       );
     }
     this.drawZones(state, heartRate, feel);
-    this.drawPlayhead(state.elapsedSec);
+    this.strip.update(state, extras);
 
     const seg = state.segment;
     const segName =
@@ -301,6 +279,9 @@ export class Hud {
   hideQuit(): void {
     this.quitButton.rect.setVisible(false).disableInteractive();
     this.quitButton.label.setVisible(false);
+    this.mapButton.rect.setVisible(false).disableInteractive();
+    this.mapButton.gfx.setVisible(false);
+    this.mapButton.label.setVisible(false);
   }
 
   // ---- zonas ----------------------------------------------------------------
@@ -368,37 +349,6 @@ export class Hud {
     this.zoneCaption.setText(`Vas en ${mine} · el tramo pide ${zoneLabel(zoneMin, zoneMax)}${verdict}${run}`);
     this.zoneCaption.setColor(color);
     this.zoneCaption.setY(ZONE_Y + ZONE_H + 12);
-  }
-
-  // ---- línea de tiempo --------------------------------------------------------
-
-  private drawTimeline(): void {
-    const g = this.timeline;
-    g.clear();
-    g.fillStyle(0x0b0e18, 0.55);
-    g.fillRect(TIMELINE_X - 4, TIMELINE_Y - 4, TIMELINE_W + 8, TIMELINE_H + 8);
-    for (const seg of this.segments) {
-      if (seg.durationSec <= 0) continue;
-      const x = TIMELINE_X + (TIMELINE_W * seg.startSec) / this.totalSec;
-      const w = Math.max(1, (TIMELINE_W * seg.durationSec) / this.totalSec - 1);
-      const h = Math.max(3, (TIMELINE_H - 4) * (seg.zombieSpeedKph / this.maxKph));
-      g.fillStyle(KIND_COLOR[seg.kind] ?? 0xffffff, 0.8);
-      g.fillRect(x, TIMELINE_Y + TIMELINE_H - h, w, h);
-    }
-    g.fillStyle(0x3a4152, 1);
-    g.fillRect(TIMELINE_X, TIMELINE_Y + TIMELINE_H, TIMELINE_W, 2);
-  }
-
-  private drawPlayhead(elapsedSec: number): void {
-    const g = this.playhead;
-    g.clear();
-    const x = TIMELINE_X + (TIMELINE_W * Math.min(1, elapsedSec / this.totalSec));
-    // Lo ya pedaleado se apaga un poco; el cabezal marca dónde vas.
-    g.fillStyle(0x05060e, 0.45);
-    g.fillRect(TIMELINE_X, TIMELINE_Y - 2, Math.max(0, x - TIMELINE_X), TIMELINE_H + 4);
-    g.fillStyle(0xffffff, 0.95);
-    g.fillRect(x - 1, TIMELINE_Y - 4, 2, TIMELINE_H + 8);
-    g.fillTriangle(x - 5, TIMELINE_Y - 9, x + 5, TIMELINE_Y - 9, x, TIMELINE_Y - 3);
   }
 
   // ---- terminar -----------------------------------------------------------------
