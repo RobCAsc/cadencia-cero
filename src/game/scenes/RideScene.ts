@@ -324,7 +324,8 @@ export class RideScene extends Phaser.Scene {
     this.mapView = new MapView(this, {
       programName: this.program.name,
       segments: this.sim.currentSegments,
-      kmBeforeToday: this.kmBeforeToday,
+      sessions: this.history(),
+      startedAtMs: this.startedAtMs,
       onClose: () => this.closeMap(),
     });
   }

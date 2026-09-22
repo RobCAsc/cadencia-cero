@@ -162,7 +162,31 @@ export type IconName =
   | 'compass'
   | 'snowflake'
   | 'arrowDown'
-  | 'warning';
+  | 'warning'
+  | 'bridge'
+  | 'pump'
+  | 'lighthouse'
+  | 'dam'
+  | 'monastery'
+  | 'station'
+  | 'port'
+  | 'island'
+  | 'observatory'
+  | 'frontier';
+
+/** Cada refugio de la Ruta con su dibujo: son lugares, no casitas iguales. */
+export const REFUGE_ICON: Record<string, IconName> = {
+  'El puente': 'bridge',
+  'La gasolinera': 'pump',
+  'El faro': 'lighthouse',
+  'La presa': 'dam',
+  'El monasterio': 'monastery',
+  'La estación': 'station',
+  'El puerto': 'port',
+  'La isla': 'island',
+  'El observatorio': 'observatory',
+  'La frontera': 'frontier',
+};
 
 /**
  * Iconos trazados con líneas y círculos, tamaño `size` (alto), centrados en
@@ -341,6 +365,111 @@ export function icon(g: Phaser.GameObjects.Graphics, name: IconName, cx: number,
         const a = (i * Math.PI) / 3;
         g.lineBetween(cx - Math.cos(a) * s * 0.85, cy - Math.sin(a) * s * 0.85, cx + Math.cos(a) * s * 0.85, cy + Math.sin(a) * s * 0.85);
       }
+      break;
+    }
+    case 'bridge': {
+      g.lineBetween(cx - s, cy + s * 0.5, cx + s, cy + s * 0.5);
+      g.lineBetween(cx - s, cy - s * 0.2, cx + s, cy - s * 0.2);
+      g.beginPath();
+      g.arc(cx - s * 0.45, cy + s * 0.5, s * 0.4, Math.PI, 0, false);
+      g.strokePath();
+      g.beginPath();
+      g.arc(cx + s * 0.45, cy + s * 0.5, s * 0.4, Math.PI, 0, false);
+      g.strokePath();
+      for (let i = -3; i <= 3; i++) g.lineBetween(cx + i * s * 0.3, cy - s * 0.2, cx + i * s * 0.3, cy - s * 0.6);
+      break;
+    }
+    case 'pump': {
+      g.strokeRect(cx - s * 0.5, cy - s * 0.6, s * 0.8, s * 1.4);
+      g.fillRect(cx - s * 0.35, cy - s * 0.45, s * 0.5, s * 0.35);
+      g.lineBetween(cx + s * 0.3, cy - s * 0.2, cx + s * 0.7, cy - s * 0.2);
+      g.lineBetween(cx + s * 0.7, cy - s * 0.2, cx + s * 0.7, cy + s * 0.5);
+      g.lineBetween(cx - s * 0.9, cy - s * 0.9, cx + s * 0.9, cy - s * 0.9);
+      g.lineBetween(cx - s * 0.7, cy - s * 0.9, cx - s * 0.7, cy - s * 0.6);
+      g.lineBetween(cx + s * 0.7, cy - s * 0.9, cx + s * 0.7, cy - s * 0.6);
+      break;
+    }
+    case 'lighthouse': {
+      g.strokePoints([
+        { x: cx - s * 0.35, y: cy + s },
+        { x: cx - s * 0.2, y: cy - s * 0.5 },
+        { x: cx + s * 0.2, y: cy - s * 0.5 },
+        { x: cx + s * 0.35, y: cy + s },
+      ], true, true);
+      g.strokeRect(cx - s * 0.3, cy - s * 0.85, s * 0.6, s * 0.35);
+      g.lineBetween(cx - s * 0.6, cy + s, cx + s * 0.6, cy + s);
+      g.lineBetween(cx - s * 0.28, cy + s * 0.2, cx + s * 0.28, cy + s * 0.2);
+      break;
+    }
+    case 'dam': {
+      g.beginPath();
+      g.moveTo(cx - s, cy - s * 0.6);
+      g.lineTo(cx - s, cy + s * 0.9);
+      g.lineTo(cx + s, cy + s * 0.9);
+      g.lineTo(cx + s, cy - s * 0.6);
+      g.strokePath();
+      g.beginPath();
+      g.arc(cx, cy - s * 1.4, s * 1.3, Math.PI * 0.3, Math.PI * 0.7, false);
+      g.strokePath();
+      for (let i = -2; i <= 2; i++) g.lineBetween(cx + i * s * 0.4, cy - s * 0.3, cx + i * s * 0.4, cy + s * 0.9);
+      break;
+    }
+    case 'monastery': {
+      g.strokeRect(cx - s * 0.9, cy - s * 0.1, s * 1.3, s * 1.0);
+      g.strokeRect(cx + s * 0.4, cy - s * 0.6, s * 0.5, s * 1.5);
+      g.lineBetween(cx + s * 0.65, cy - s * 1.0, cx + s * 0.65, cy - s * 0.6);
+      g.lineBetween(cx + s * 0.5, cy - s * 0.88, cx + s * 0.8, cy - s * 0.88);
+      g.beginPath();
+      g.arc(cx - s * 0.25, cy + s * 0.5, s * 0.22, Math.PI, 0, false);
+      g.strokePath();
+      g.lineBetween(cx - s * 0.47, cy + s * 0.5, cx - s * 0.47, cy + s * 0.9);
+      g.lineBetween(cx - s * 0.03, cy + s * 0.5, cx - s * 0.03, cy + s * 0.9);
+      break;
+    }
+    case 'station': {
+      g.strokeRect(cx - s * 0.9, cy - s * 0.2, s * 1.8, s * 0.9);
+      g.beginPath();
+      g.arc(cx, cy - s * 0.2, s * 0.9, Math.PI, 0, false);
+      g.strokePath();
+      g.strokeCircle(cx, cy - s * 0.5, s * 0.22);
+      g.lineBetween(cx, cy - s * 0.5, cx, cy - s * 0.65);
+      g.lineBetween(cx, cy - s * 0.5, cx + s * 0.1, cy - s * 0.45);
+      g.lineBetween(cx - s, cy + s * 0.95, cx + s, cy + s * 0.95);
+      for (let i = -3; i <= 3; i += 2) g.lineBetween(cx + i * s * 0.25, cy + s * 0.8, cx + i * s * 0.25, cy + s);
+      break;
+    }
+    case 'port': {
+      g.strokeCircle(cx, cy - s * 0.7, s * 0.18);
+      g.lineBetween(cx, cy - s * 0.52, cx, cy + s * 0.75);
+      g.lineBetween(cx - s * 0.45, cy - s * 0.2, cx + s * 0.45, cy - s * 0.2);
+      g.beginPath();
+      g.arc(cx, cy + s * 0.1, s * 0.75, Math.PI * 0.15, Math.PI * 0.85, false);
+      g.strokePath();
+      break;
+    }
+    case 'island': {
+      g.beginPath();
+      g.arc(cx, cy + s * 1.1, s * 1.0, Math.PI * 1.15, Math.PI * 1.85, false);
+      g.strokePath();
+      g.lineBetween(cx - s * 0.1, cy + s * 0.5, cx + s * 0.15, cy - s * 0.5);
+      g.lineBetween(cx + s * 0.15, cy - s * 0.5, cx - s * 0.4, cy - s * 0.85);
+      g.lineBetween(cx + s * 0.15, cy - s * 0.5, cx + s * 0.7, cy - s * 0.8);
+      g.lineBetween(cx + s * 0.15, cy - s * 0.5, cx + s * 0.55, cy - s * 0.15);
+      break;
+    }
+    case 'observatory': {
+      g.strokeRect(cx - s * 0.7, cy, s * 1.4, s * 0.9);
+      g.beginPath();
+      g.arc(cx, cy, s * 0.7, Math.PI, 0, false);
+      g.strokePath();
+      g.lineBetween(cx, cy - s * 0.2, cx + s * 0.75, cy - s * 0.95);
+      break;
+    }
+    case 'frontier': {
+      g.lineBetween(cx - s * 0.9, cy + s, cx - s * 0.9, cy - s * 0.4);
+      g.lineBetween(cx - s * 0.9, cy - s * 0.4, cx + s, cy - s * 0.4);
+      for (let i = 0; i < 4; i++) g.lineBetween(cx - s * 0.7 + i * s * 0.45, cy - s * 0.4, cx - s * 0.5 + i * s * 0.45, cy - s * 0.1);
+      g.lineBetween(cx - s * 0.9, cy - s * 0.1, cx + s, cy - s * 0.1);
       break;
     }
     case 'arrowDown': {
