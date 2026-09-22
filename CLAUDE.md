@@ -47,7 +47,7 @@ Resistance level is **declared by the rider**, not sensed: a coarse 1–8 contro
 
 ### Getting caught
 
-Being caught **must not end the session.** It costs health, costs distance, and should be loud and unpleasant — but a game-over screen terminates the workout at precisely the moment the training stimulus is highest. Design the failure state as a setback within the ride, never as a terminal condition.
+Being caught **must not end the session.** It costs health, costs distance, and should be loud and unpleasant — but a game-over screen terminates the workout at precisely the moment the training stimulus is highest. Design the failure state as a setback within the ride, never as a terminal condition. Health comes back by riding well: every three minutes inside the prescribed zone (`catch.healthRegenSec`) restore one heart, the cost of one catch, and the HUD shows the recovering heart lighting up. Until 2026-09-22 hearts only went down, and a bad minute early in the ride was carried to the end.
 
 ## BLE implementation notes
 

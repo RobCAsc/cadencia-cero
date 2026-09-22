@@ -211,6 +211,18 @@ describe('RideSim: ser atrapado es un revés, nunca el final', () => {
     throw new Error('nunca lo atraparon');
   });
 
+  it('la salud vuelve pedaleando: un corazón cada healthRegenSec, no durante el tropiezo', () => {
+    const sim = new RideSim(steady(1000, 36), cfg({ initialGapM: 5 }), now, CADENCE);
+    coastFor(sim, 0.5);
+    expect(sim.state.healthPct).toBe(80);
+    pedalFor(sim, SIM.catch.graceSec, 60); // gracia: se aleja a 60 km/h, pero no cura
+    expect(sim.state.healthPct).toBeCloseTo(80, 0);
+    pedalFor(sim, SIM.catch.healthRegenSec / 2, 60);
+    expect(sim.state.healthPct).toBeCloseTo(90, 0);
+    pedalFor(sim, SIM.catch.healthRegenSec, 60);
+    expect(sim.state.healthPct).toBe(SIM.maxHealth);
+  });
+
   it('con salud 0 el ride sigue: healthDepleted una sola vez, catches siguen contando', () => {
     const sim = new RideSim(steady(2000, 36), cfg({ initialGapM: 1 }), now, CADENCE);
     const events = coastFor(sim, 32); // catches ~cada 5 s desde t≈0.1

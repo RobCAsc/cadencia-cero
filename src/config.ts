@@ -136,6 +136,12 @@ export interface CatchConfig {
   graceSec: number;
   /** Factor de velocidad de la horda mientras "se tropieza" tras atraparte. */
   stumbleSpeedFactor: number;
+  /**
+   * Segundos pedaleando en la zona prescrita que recuperan lo que cuesta una
+   * captura (un corazón). Una captura es un tropiezo, no una herida: la salud
+   * vuelve entrenando bien.
+   */
+  healthRegenSec: number;
 }
 
 export interface SimConfig {
@@ -239,6 +245,7 @@ export const SIM: SimConfig = {
     distancePenaltyM: 25,
     graceSec: 5,
     stumbleSpeedFactor: 0.6,
+    healthRegenSec: 180,
   },
   // Reglas de parada: el juego nunca pide más que el techo de la zona, y si
   // el pulso se pasa del máximo del perfil la horda se congela hasta que

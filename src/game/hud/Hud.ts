@@ -249,22 +249,32 @@ export class Hud {
     }
     if (!this.cooling && this.quitArmedUntil > 0 && this.scene.time.now > this.quitArmedUntil) this.disarmQuit();
 
-    if (state.healthPct !== this.lastHealthPct) {
-      this.lastHealthPct = state.healthPct;
+    const healthKey = Math.round(state.healthPct);
+    if (healthKey !== this.lastHealthPct) {
+      this.lastHealthPct = healthKey;
       this.drawHearts(state.healthPct);
     }
   }
 
-  /** Cinco corazones: los que quedan encendidos, los perdidos apagados. */
+  /**
+   * Cinco corazones: los que quedan encendidos, los perdidos apagados, y el
+   * que se está recuperando pedaleando en zona, encendiéndose poco a poco.
+   */
   private drawHearts(healthPct: number): void {
     const g = this.hearts;
     g.clear();
-    const alive = Math.round((healthPct / SIM.maxHealth) * HEARTS);
+    const perHeart = SIM.maxHealth / HEARTS;
+    const alive = Math.floor(healthPct / perHeart + 1e-6);
+    const partial = Math.max(0, Math.min(1, (healthPct - alive * perHeart) / perHeart));
+    const color = alive + (partial > 0 ? 1 : 0) <= 2 ? 0xe74c3c : 0x2ecc71;
     for (let i = 0; i < HEARTS; i++) {
       const x = 40 + i * 38;
       const y = RENDER.height - 58;
-      if (i < alive) icon(g, 'heart', x, y, 30, alive <= 2 ? 0xe74c3c : 0x2ecc71);
-      else icon(g, 'heart', x, y, 30, 0x2c3242, 0.9);
+      if (i < alive) icon(g, 'heart', x, y, 30, color);
+      else if (i === alive && partial > 0.02) {
+        icon(g, 'heart', x, y, 30, 0x2c3242, 0.9);
+        icon(g, 'heart', x, y, 30 * (0.6 + 0.4 * partial), color, 0.25 + 0.7 * partial);
+      } else icon(g, 'heart', x, y, 30, 0x2c3242, 0.9);
     }
   }
 

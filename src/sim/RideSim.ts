@@ -406,6 +406,17 @@ export class RideSim {
     if (this.push && curSeg?.kind === 'push' && zone >= this.push.zoneMin) this.push.zoneSec += dt;
     if (inZone) this.inZoneSec += dt;
     if (above) this.aboveZoneSec += dt;
+    // La salud vuelve pedaleando en zona (sin pulso que juzgue, pedaleando):
+    // un corazón, lo que cuesta una captura, cada healthRegenSec. No mientras
+    // la horda tropieza contigo.
+    const healing =
+      this.caughtGraceSec <= 0 &&
+      this.healthPct < this.cfg.maxHealth &&
+      (inZone || (this.inputMode === 'cadence' && rpm > 0));
+    if (healing) {
+      this.healthPct = Math.min(this.cfg.maxHealth, this.healthPct + (this.cfg.catch.healthCost / this.cfg.catch.healthRegenSec) * dt);
+      if (this.healthDepletedNotified && this.healthPct >= this.cfg.catch.healthCost) this.healthDepletedNotified = false;
+    }
     this.inZoneRunSec = inZone ? this.inZoneRunSec + dt : 0;
     this.bestInZoneRunSec = Math.max(this.bestInZoneRunSec, this.inZoneRunSec);
     this.effectiveRpm = rpm;

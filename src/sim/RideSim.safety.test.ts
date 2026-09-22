@@ -277,6 +277,22 @@ describe('la ventana de asentamiento', () => {
   });
 });
 
+describe('la salud vuelve pedaleando en zona', () => {
+  it('una captura cuesta un corazón y tres minutos en zona lo devuelven; fuera de zona no vuelve', () => {
+    const sim = make(fondo());
+    beatFor(sim, 60, 115); // el calor, en zona, con la ventaja al tope
+    beatFor(sim, 85, 85); // en el Z2: 25 km/h contra 30 (tras la rampa), te alcanzan hacia los 78 s
+    expect(sim.state.timesCaught).toBe(1);
+    expect(sim.state.healthPct).toBe(80);
+    beatFor(sim, 5, 85); // gracia y por debajo de la zona: no cura
+    expect(sim.state.healthPct).toBe(80);
+    beatFor(sim, 90, 125); // 65 %: Z2, en zona → medio corazón
+    expect(sim.state.healthPct).toBeCloseTo(90, 0);
+    beatFor(sim, 100, 125);
+    expect(sim.state.healthPct).toBe(SIM.maxHealth);
+  });
+});
+
 describe('la ventaja deja rastro', () => {
   it('muestrea la ventaja y el pulso cada gapTraceStepSec, y cuenta los segundos con la pulsera callada', () => {
     const sim = make(fondo(), { gapTraceStepSec: 5 });
