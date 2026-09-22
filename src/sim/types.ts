@@ -79,6 +79,10 @@ export interface SimState {
   playerSpeedKph: number;
   /** Velocidad efectiva de la horda (con rampa y tropiezo aplicados). */
   zombieSpeedKph: number;
+  /** Segundos que tarda la horda en despertar: todo el calentamiento, al menos hordeWakeSec. */
+  hordeWakeSec: number;
+  /** En la vuelta a la calma final: la horda se va quedando hasta pararse. */
+  hordeFading: boolean;
   resistanceLevel: number;
   segment: SegmentInfo;
   caughtGraceSec: number;

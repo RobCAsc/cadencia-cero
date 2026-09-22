@@ -583,7 +583,7 @@ export class RideScene extends Phaser.Scene {
     this.effects.updateHorde(this.horde.screenX, this.horde.run01, slope);
     // Con la ventaja congelada, asentándose o la horda parada, el latido no
     // debe empujar a apretar más: la horda no gana.
-    const hordeCalm = state.aboveZone || state.settling || state.easeOff || state.coolingDown;
+    const hordeCalm = state.aboveZone || state.settling || state.easeOff || state.coolingDown || state.hordeFading;
     proximityAudio.update(state.gapM, this.horde.run01, dt, hordeCalm);
     bikeAudio.update(state.playerSpeedKph);
     ambientAudio.update(night01, Math.max(0, Math.min(1, (progress - 0.88) / 0.12)));

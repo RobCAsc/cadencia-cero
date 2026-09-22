@@ -31,6 +31,10 @@ const PUSH_MIN_TAIL_SEC = 30;
 export class RideSim {
   private segments: ExpandedSegment[];
   private totalSec: number;
+  /** La horda despierta durante todo el calentamiento (o hordeWakeSec, lo que sea más largo). */
+  private readonly hordeWakeSec: number;
+  /** En la vuelta a la calma final la horda se va quedando hasta pararse. */
+  private hordeFading = false;
   private readonly cfg: SimConfig;
   private readonly now: () => number;
   private readonly inputMode: InputMode;
@@ -120,6 +124,9 @@ export class RideSim {
     this.segments = expandProgram(program);
     this.totalSec = totalDurationSec(this.segments);
     this.cfg = cfg;
+    // El calentamiento es para que el corazón llegue: la horda llega con él.
+    const first = this.segments[0];
+    this.hordeWakeSec = first && first.kind === 'warmup' ? Math.max(cfg.hordeWakeSec, first.durationSec) : cfg.hordeWakeSec;
     this.now = now;
     this.inputMode = opts.inputMode ?? 'heartRate';
     this.rider = opts.rider ?? RIDER;
@@ -326,8 +333,15 @@ export class RideSim {
     const feel = this.inputMode === 'feel';
 
     let zKph = zombieSpeedAt(this.segments, this.elapsedSec, this.cfg.zombieRampSec, this.cfg.zombieRampUpSec);
-    // La horda despierta: parada al principio, a su ritmo al cabo de hordeWakeSec.
-    if (this.cfg.hordeWakeSec > 0 && !feel) zKph *= Math.min(1, this.elapsedSec / this.cfg.hordeWakeSec);
+    // La horda despierta: parada al principio, a su ritmo al final del calentamiento.
+    if (this.hordeWakeSec > 0 && !feel) zKph *= Math.min(1, this.elapsedSec / this.hordeWakeSec);
+    // En la vuelta a la calma final la horda se va quedando hasta pararse: el
+    // premio de la salida es el amanecer, no una huida con el pulso bajando.
+    const last = this.segments[this.segments.length - 1];
+    this.hordeFading = !feel && !this.coolingDown && curSeg !== undefined && curSeg === last && curSeg.kind === 'cooldown';
+    if (this.hordeFading && curSeg) {
+      zKph *= Math.max(0, 1 - (this.elapsedSec - curSeg.startSec) / Math.max(1, curSeg.durationSec));
+    }
     if (this.caughtGraceSec > 0) zKph *= this.cfg.catch.stumbleSpeedFactor;
 
     // Zona prescrita por el tramo: bajo el piso te alcanzan (la horda corre a
@@ -592,6 +606,8 @@ export class RideSim {
       inZoneRunSec: this.inZoneRunSec,
       playerSpeedKph: this.lastPlayerKph,
       zombieSpeedKph: this.lastZombieKph,
+      hordeWakeSec: this.hordeWakeSec,
+      hordeFading: this.hordeFading,
       resistanceLevel: this.resistanceLevel,
       caughtGraceSec: this.caughtGraceSec,
       timesCaught: this.timesCaught,

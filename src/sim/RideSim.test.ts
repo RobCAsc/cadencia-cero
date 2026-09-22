@@ -83,6 +83,35 @@ describe('RideSim: la integral del gap', () => {
     expect(sim.state.gapM).toBeGreaterThan(50 - (20 / 3.6) * 11);
   });
 
+  it('la horda despierta durante todo el calentamiento, aunque sea más largo que hordeWakeSec', () => {
+    const program = prog([
+      { kind: 'warmup', durationSec: 180, zone: [0, 1], zombieSpeedKph: 20 },
+      { kind: 'steady', durationSec: 600, zone: 2, zombieSpeedKph: 20 },
+    ]);
+    const sim = new RideSim(program, cfg({ hordeWakeSec: 90, initialGapM: 50 }), now, CADENCE);
+    expect(sim.state.hordeWakeSec).toBe(180);
+    pedalFor(sim, 90, 25);
+    expect(sim.state.zombieSpeedKph).toBeCloseTo(10, 0); // a mitad del calor, a medio gas
+    pedalFor(sim, 90, 25);
+    expect(sim.state.zombieSpeedKph).toBeCloseTo(20, 0); // al acabar el calor, a su paso
+    expect(sim.state.timesCaught).toBe(0);
+  });
+
+  it('en la vuelta a la calma final la horda se va quedando hasta pararse', () => {
+    const program = prog([
+      { kind: 'steady', durationSec: 60, zone: [0, 5], zombieSpeedKph: 20 },
+      { kind: 'cooldown', durationSec: 100, zone: [0, 1], zombieSpeedKph: 10 },
+    ]);
+    const sim = new RideSim(program, cfg({ initialGapM: 50 }), now, CADENCE);
+    pedalFor(sim, 59, 25);
+    expect(sim.state.hordeFading).toBe(false);
+    pedalFor(sim, 51, 25); // 110 s: a mitad de la calma
+    expect(sim.state.hordeFading).toBe(true);
+    expect(sim.state.zombieSpeedKph).toBeCloseTo(5, 0);
+    pedalFor(sim, 49, 25); // 159 s: casi parada
+    expect(sim.state.zombieSpeedKph).toBeLessThan(0.5);
+  });
+
   it('clampa dt a maxDtSec y no avanza con dt <= 0', () => {
     const sim = new RideSim(steady(1000, 14), cfg(), now, CADENCE);
     sim.update(5);

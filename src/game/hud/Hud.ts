@@ -183,9 +183,11 @@ export class Hud {
     this.hordeSpeedText.setText(
       state.coolingDown || state.easeOff
         ? 'horda parada'
-        : state.elapsedSec < SIM.hordeWakeSec && state.zombieSpeedKph < state.segment.zombieSpeedKph * 0.95
-          ? 'la horda despierta…'
-          : `horda a ${state.zombieSpeedKph.toFixed(0)} km/h`,
+        : state.hordeFading
+          ? 'la horda se queda…'
+          : state.elapsedSec < state.hordeWakeSec && state.zombieSpeedKph < state.segment.zombieSpeedKph * 0.95
+            ? 'la horda despierta…'
+            : `horda a ${state.zombieSpeedKph.toFixed(0)} km/h`,
     );
     const feel = state.inputMode === 'feel';
     const heartRate = state.inputMode === 'heartRate' || (!feel && state.heartRateBpm > 0);
