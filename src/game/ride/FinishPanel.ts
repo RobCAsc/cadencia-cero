@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { RENDER, type InputMode } from '../../config';
-import { describeEncounter } from '../../sim/encounters';
+import { describeEncounters } from '../../sim/encounters';
 import type { SessionRecord } from '../../sim/history';
 import { newMarks } from '../../sim/marks';
 import {
@@ -262,11 +262,11 @@ export class FinishPanel {
       y += 30;
     }
     // Lo que pasó en la carretera sin que nadie lo prescribiera: una línea, sin más.
-    const encounter = opts.record.encounter;
-    if (encounter) {
+    const encounters = opts.record.encounters ?? [];
+    if (encounters.length > 0) {
       icon(g, 'compass', LEFT_X + 10, y + 9, 18, INK_HEX, 0.8);
-      text(LEFT_X + 26, y, describeEncounter(encounter.kind, encounter.km), 14, INK_MUTED);
-      y += 30;
+      text(LEFT_X + 26, y, describeEncounters(encounters), 13, INK_MUTED, { wordWrap: { width: PANEL_W - 110 } });
+      y += encounters.length > 2 ? 44 : 30;
     }
     if (this.hardRide) stamp(scene, PANEL_X + PANEL_W - 130, PANEL_Y + PANEL_H - 100, 'mañana descansa', INK_GOLD, DEPTH + 2, 12);
     this.noteText = text(LEFT_X, Math.min(y, PANEL_Y + 552), '', 13, INK_GOLD, { wordWrap: { width: PANEL_W - 300 } });

@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { RENDER, RIDER, SIM, type InputMode, type RiderProfile } from '../../config';
 import type { CadenceSource } from '../../input/CadenceSource';
 import type { HeartRateSource } from '../../input/HeartRateSource';
-import { planEncounter, type EncounterPlan } from '../../sim/encounters';
+import { planRide, type EncounterPlan } from '../../sim/encounters';
 import { toSessionRecord, type EncounterRecord, type SessionRecord } from '../../sim/history';
 import { expandProgram, totalDurationSec, type TrainingProgram } from '../../sim/program';
 import { applyAdjustments, PROGRAM_CATALOG } from '../../sim/programs/catalog';
@@ -91,10 +91,11 @@ export class RideScene extends Phaser.Scene {
   private mapView: MapView | undefined;
   /** Km de la Ruta antes de hoy: donde empieza el trozo de hoy en el mapa. */
   private kmBeforeToday = 0;
-  /** El encuentro de la salida: decidido al arrancar, disparado a su hora, contado en el resumen. */
+  /** Los encuentros de la salida: sacados de la bolsa al arrancar, disparados a su hora, contados en el resumen. */
   private encounters!: Encounters;
-  private encounterPlan: EncounterPlan | undefined;
-  private encounterSeen: EncounterRecord | undefined;
+  private encounterPlans: EncounterPlan[] = [];
+  private encounterNext = 0;
+  private encountersSeen: EncounterRecord[] = [];
   /** El km del frame anterior, para saber cuándo se cruza un refugio. */
   private lastKmNow = -1;
   private preRideRestBpm: number | undefined;
@@ -133,10 +134,13 @@ export class RideScene extends Phaser.Scene {
     this.lastKmNow = -1;
 
     this.atmosphere = new Atmosphere(this);
-    // El encuentro de hoy, si lo hay: la mitad de las salidas ninguno, y nunca en una oleada.
+    // Los encuentros de hoy, sacados de la bolsa: varios por salida, sin repetir, nunca en una oleada.
     this.encounters = new Encounters(this, this.atmosphere.encounterLayers);
-    this.encounterPlan = planEncounter(this.sim.currentSegments, lcg(Date.now()));
-    this.encounterSeen = undefined;
+    const ride = planRide(this.sim.currentSegments, lcg(Date.now()), loadPlanState().encounterBag);
+    this.encounterPlans = ride.encounters;
+    this.encounterNext = 0;
+    this.encountersSeen = [];
+    savePlanState({ encounterBag: ride.bag });
 
     this.ghost = new Ghost(this);
     this.cyclist = new Cyclist(this);
@@ -508,7 +512,7 @@ export class RideScene extends Phaser.Scene {
       preRideRestBpm: this.preRideRestBpm,
       rpe: this.rpe,
       note: this.note,
-      encounter: this.encounterSeen,
+      encounters: this.encountersSeen,
     });
     const history = this.history();
     this.registry.set('sessionHistory', [...history.filter((r) => r.id !== record.id), record]);
@@ -600,24 +604,22 @@ export class RideScene extends Phaser.Scene {
     this.lastKmNow = kmNow;
     this.atmosphere.update(state.playerSpeedKph / 3.6, dt);
     const slope = this.atmosphere.slope;
-    // El encuentro de hoy sale a su hora, una vez, si la carretera está tranquila.
-    const plan = this.encounterPlan;
-    if (
-      plan &&
-      !this.encounterSeen &&
-      !this.calm &&
-      !this.finishedShown &&
-      state.caughtGraceSec <= 0 &&
-      state.elapsedSec >= plan.atSec &&
-      state.elapsedSec < plan.atSec + 10
-    ) {
-      const refuge = nextRefuge(kmNow);
-      this.encounters.start(plan.kind, {
-        distanceM: state.distanceM,
-        speedMps: state.playerSpeedKph / 3.6,
-        sign: { refuge: refuge.name, kmLeft: Math.round(refuge.km - kmNow) },
-      });
-      this.encounterSeen = { kind: plan.kind, km: kmNow };
+    // Los encuentros de hoy salen a su hora, de uno en uno, si la carretera está tranquila;
+    // el que pierde su momento (una captura, la calma) no vuelve.
+    const plan = this.encounterPlans[this.encounterNext];
+    if (plan && !this.calm && !this.finishedShown && state.elapsedSec >= plan.atSec) {
+      if (state.elapsedSec >= plan.atSec + 10) {
+        this.encounterNext++;
+      } else if (state.caughtGraceSec <= 0 && this.encounters.current === undefined) {
+        const refuge = nextRefuge(kmNow);
+        this.encounters.start(plan.kind, {
+          distanceM: state.distanceM,
+          speedMps: state.playerSpeedKph / 3.6,
+          sign: { refuge: refuge.name, kmLeft: Math.round(refuge.km - kmNow) },
+        });
+        this.encountersSeen.push({ kind: plan.kind, km: kmNow });
+        this.encounterNext++;
+      }
     }
     this.encounters.update({
       dt,

@@ -58,8 +58,8 @@ export interface SessionRecord {
   hrTrace?: number[];
   /** Segundos con la pulsera callada durante la salida. */
   staleHeartRateSec?: number;
-  /** El encuentro de la salida, si lo hubo: el resumen lo cuenta en una línea. */
-  encounter?: EncounterRecord;
+  /** Los encuentros de la salida, en orden: el resumen los cuenta en una línea. */
+  encounters?: EncounterRecord[];
 }
 
 export interface SessionInput {
@@ -73,7 +73,7 @@ export interface SessionInput {
   preRideRestBpm?: number;
   rpe?: RideRpe;
   note?: string;
-  encounter?: EncounterRecord;
+  encounters?: readonly EncounterRecord[];
 }
 
 export function toSessionRecord(input: SessionInput): SessionRecord {
@@ -93,7 +93,7 @@ export function toSessionRecord(input: SessionInput): SessionRecord {
     timesCaughtInEasy: s.timesCaughtInEasy,
     ...(input.rpe !== undefined ? { rpe: input.rpe } : {}),
     ...(input.note ? { note: input.note } : {}),
-    ...(input.encounter ? { encounter: { ...input.encounter } } : {}),
+    ...(input.encounters && input.encounters.length > 0 ? { encounters: input.encounters.map((e) => ({ ...e })) } : {}),
     ...(s.gapTrace.length > 0 ? { gapTrace: [...s.gapTrace] } : {}),
     ...(s.hrTrace.length > 0 ? { hrTrace: [...s.hrTrace] } : {}),
     staleHeartRateSec: Math.round(s.staleHeartRateSec),

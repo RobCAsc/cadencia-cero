@@ -1,3 +1,4 @@
+import type { EncounterKind } from '../sim/encounters';
 import type { Block } from '../sim/programRules';
 
 // Lo que el plan recuerda entre sesiones y no es una salida: el cribado de
@@ -37,6 +38,8 @@ export interface PlanState {
   refugeNames?: Record<number, string>;
   /** La salida que el rider diseñó ("Mía"), como bloques del editor. */
   customBlocks?: Block[];
+  /** La bolsa de encuentros: los que aún no han salido en esta vuelta, en orden. */
+  encounterBag?: EncounterKind[];
 }
 
 export function loadPlanState(): PlanState {
