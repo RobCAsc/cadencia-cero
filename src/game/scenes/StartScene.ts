@@ -26,6 +26,7 @@ import { reserveWarning, stepTestDue, zoneWidthBpm, type StoredRiderProfile } fr
 import { loadPlanState, savePlanState, type PlanState } from '../../storage/planStore';
 import { Atmosphere } from '../atmosphere';
 import { gameAudio } from '../audio';
+import { campMusic } from '../music';
 import { formatMMSS } from '../format';
 import { Board } from '../start/Board';
 import { BuilderPanel } from '../start/BuilderPanel';
@@ -200,6 +201,10 @@ export class StartScene extends Phaser.Scene {
     this.add.rectangle(0, 0, 1280, 720, 0x05060e, 0.6).setOrigin(0, 0);
     this.campfire = new Campfire(this);
     this.cameras.main.fadeIn(700, 5, 6, 14);
+    // La música del campamento: arranca aquí si el navegador lo permite, o con el primer toque.
+    campMusic.play();
+    const onTap = () => campMusic.play();
+    this.input.on('pointerdown', onTap);
 
     const stored = this.registry.get('trainingConfig') as StoredConfig | undefined;
     this.stored = stored ?? { programId: 'primera-salida', values: {} };
@@ -269,6 +274,8 @@ export class StartScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       unsubscribeBand();
       this.registry.events.off('changedata-sessionHistory', onHistory);
+      this.input.off('pointerdown', onTap);
+      campMusic.stop(); // la carretera es viento, grillos y la horda
     });
     this.refreshFromHistory();
 
