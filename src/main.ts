@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { RENDER } from './config';
 import { DevPanel } from './dev/DevPanel';
+import { EncounterPreviewScene } from './dev/EncounterPreviewScene';
 import { RideScene } from './game/scenes/RideScene';
 import { StartScene } from './game/scenes/StartScene';
 import { BandConnection } from './input/BandConnection';
@@ -16,6 +17,9 @@ import { registerServiceWorker } from './pwa';
 import { loadPlanState } from './storage/planStore';
 
 registerServiceWorker();
+
+/** Vista previa de los encuentros: la carretera de noche con los dieciséis pasando uno tras otro. */
+const previewEncounters = location.search.includes('preview=encuentros');
 
 const source = createCadenceSource('fake');
 void source.start();
@@ -35,7 +39,7 @@ const game = new Phaser.Game({
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [StartScene, RideScene],
+  scene: previewEncounters ? [EncounterPreviewScene] : [StartScene, RideScene],
 });
 
 game.registry.set('cadenceSource', source);
@@ -60,7 +64,7 @@ if (
   source instanceof FakeCadenceSource &&
   heartRate instanceof FakeHeartRateSource
 ) {
-  new DevPanel(game, source, heartRate);
+  if (!previewEncounters) new DevPanel(game, source, heartRate);
   // Referencias para depurar desde la consola del navegador.
   (window as unknown as { game?: Phaser.Game; sfx?: typeof sfx }).game = game;
   (window as unknown as { sfx?: typeof sfx }).sfx = sfx;

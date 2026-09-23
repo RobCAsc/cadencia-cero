@@ -155,12 +155,14 @@ function drawDeer(g: Phaser.GameObjects.Graphics, x: number, y: number, s: numbe
 
 class Deer extends Active {
   protected draw(f: EncounterFrame, L: EncounterLayers): boolean {
-    const k = Math.min(1, this.t / 1.7);
-    const x = worldX(f, this.startM, 9) - k * 40;
+    // Tres saltos hasta el borde de acá, y sigue hacia el primer plano hasta salir por abajo.
+    const run = this.t / 1.7;
+    const k = Math.min(1, run);
+    const x = worldX(f, this.startM, 9) - run * 40;
     const yTop = feetY(x, f.slope) - 6;
-    const y = yTop + k * 150 - Math.abs(Math.sin(k * Math.PI * 3)) * 30;
-    if (y > RENDER.height + 80 || x < -80) return false;
+    const y = yTop + run * 150 - Math.abs(Math.sin(k * Math.PI * 3)) * 30;
     const s = 0.95 + k * 0.7;
+    if (y - 80 * s > RENDER.height || x < -80) return false;
     drawDeer(L.near, x, y, s, nearTone(f, x), f.light, f.night, k);
     // El contorno de la luna, como el del ciclista: lo que lo separa del asfalto.
     L.near.lineStyle(1.5, 0x9fb0d0, 0.35 * f.night);
