@@ -8,6 +8,7 @@ import { applyAdjustments, PROGRAM_CATALOG } from '../../sim/programs/catalog';
 import { OLEADAS } from '../../sim/programs/oleadas';
 import { RideSim } from '../../sim/RideSim';
 import { nextRefuge, preRideRestReadings, readiness, routeProgress, weekStartMs, type PlanPhase } from '../../sim/progress';
+import { refugesAround } from '../../sim/routeMap';
 import {
   applyAdvice,
   calibrationAdvice,
@@ -87,6 +88,8 @@ export class RideScene extends Phaser.Scene {
   private mapView: MapView | undefined;
   /** Km de la Ruta antes de hoy: donde empieza el trozo de hoy en el mapa. */
   private kmBeforeToday = 0;
+  /** El km del frame anterior, para saber cuándo se cruza un refugio. */
+  private lastKmNow = -1;
   private preRideRestBpm: number | undefined;
   /** Dónde ibas la última vez con este programa, cada gapTraceStepSec. */
   private ghostTrace: readonly number[] | undefined;
@@ -120,6 +123,7 @@ export class RideScene extends Phaser.Scene {
     this.ghostTrace = this.findGhostTrace(program, inputMode);
     this.mapView = undefined;
     this.kmBeforeToday = routeProgress(this.history()).totalKm;
+    this.lastKmNow = -1;
 
     this.atmosphere = new Atmosphere(this);
 
@@ -570,6 +574,17 @@ export class RideScene extends Phaser.Scene {
     this.atmosphere.setProgress(progress);
     // El terreno se empina en las cuestas: la consigna de resistencia, hecha visible.
     this.atmosphere.setSlope(slopeForGrade(state.segment.grade ?? 0));
+    // Los refugios de la Ruta que la salida cruza aparecen en el paisaje y
+    // pasan con él; al cruzarlos, se encienden.
+    const kmNow = this.kmBeforeToday + state.distanceM / 1000;
+    const nearby = refugesAround(kmNow, 0.6);
+    this.atmosphere.setLandmarks(nearby);
+    if (this.lastKmNow >= 0 && !this.finishedShown) {
+      for (const r of nearby) {
+        if (r.km > this.lastKmNow && r.km <= kmNow) this.banner.showNotice(`Refugio ${r.name}: encendido`, 4500, GOLD);
+      }
+    }
+    this.lastKmNow = kmNow;
     this.atmosphere.update(state.playerSpeedKph / 3.6, dt);
     const slope = this.atmosphere.slope;
 
@@ -610,7 +625,6 @@ export class RideScene extends Phaser.Scene {
     camera.scrollY = crankRpm > 5 ? Math.sin(this.cyclist.crank * 2) * 1.3 : 0;
 
     // La Ruta sigue durante la salida: el siguiente refugio y lo que falta hasta él.
-    const kmNow = this.kmBeforeToday + state.distanceM / 1000;
     const refuge = nextRefuge(kmNow);
     this.hud.update(state, { ghostDeltaM, refuge: { name: refuge.name, distanceM: (refuge.km - kmNow) * 1000 } });
     this.mapView?.update(state, { ghostDeltaM });

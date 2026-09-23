@@ -130,6 +130,22 @@ export function routeOverview(
   };
 }
 
+export interface NearbyRefuge extends Refuge {
+  /** Metros hasta el refugio desde donde vas; negativo si ya lo pasaste. */
+  metersAhead: number;
+}
+
+/** Los refugios a menos de rangeKm de donde vas, por delante o recién pasados: los que se ven en el paisaje. */
+export function refugesAround(kmNow: number, rangeKm: number): NearbyRefuge[] {
+  const out: NearbyRefuge[] = [];
+  for (let i = 0; i < 1000; i++) {
+    const r = refugeAt(i);
+    if (r.km > kmNow + rangeKm) break;
+    if (r.km >= kmNow - rangeKm) out.push({ ...r, metersAhead: (r.km - kmNow) * 1000 });
+  }
+  return out;
+}
+
 export interface TodayWindow {
   fromKm: number;
   toKm: number;

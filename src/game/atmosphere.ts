@@ -1,7 +1,11 @@
 import Phaser from 'phaser';
 import { RENDER } from '../config';
 import { groundYAt, slopeRotation } from './gapMapping';
+import { drawLandmark, landmarkHalfWidth, landmarkLayer, type Landmark } from './landmarks';
 import { lcg } from './rng';
+
+/** La capa media scrollea a esta fracción de la carretera; los refugios lejanos van con ella. */
+const MID_FACTOR = 0.38;
 
 /** La carretera y los matorrales se inclinan pivotando en los pies del ciclista; anchos de sobra para no dejar huecos. */
 const SLOPE_LAYER_W = 2600;
@@ -520,6 +524,10 @@ export class Atmosphere {
   private readonly fogFront: Phaser.GameObjects.TileSprite;
   private readonly lamps: Lamp[] = [];
   private readonly frontFogBase: number;
+  private readonly farMarks: Phaser.GameObjects.Graphics;
+  private readonly nearMarks: Phaser.GameObjects.Graphics;
+  /** Los refugios de la Ruta que caen cerca de donde vas, con sus metros por delante. */
+  private landmarks: readonly Landmark[] = [];
 
   private progress = 0.3;
   private drawnProgress = -1;
@@ -567,6 +575,8 @@ export class Atmosphere {
       .setOrigin(0, 0)
       .setAlpha(0.4);
     this.mid = scene.add.tileSprite(0, HORIZON_Y - 230, w, 230, 'atm-mid').setOrigin(0, 0);
+    // Los refugios lejanos, entre la capa media y los matorrales.
+    this.farMarks = scene.add.graphics();
     this.fogMid = scene.add
       .tileSprite(0, HORIZON_Y - 150, w, 160, 'atm-fog')
       .setOrigin(0, 0)
@@ -596,6 +606,8 @@ export class Atmosphere {
         .setDepth(1);
       this.lamps.push({ ...spec, post, cone, pool, flickerLeft: 0, lit: spec.kind !== 'dead' });
     }
+    // Los refugios junto al asfalto, a la escala de la carretera, por detrás de los actores.
+    this.nearMarks = scene.add.graphics().setDepth(1);
 
     // Niebla frontal, por delante de los actores (depth > actores, < HUD).
     this.frontFogBase = withFrontFog ? 0.18 : 0;
@@ -628,6 +640,11 @@ export class Atmosphere {
     this.slopeTarget = slope;
   }
 
+  /** Los refugios que la salida está cruzando: aparecen en el paisaje y pasan con él. */
+  setLandmarks(landmarks: readonly Landmark[]): void {
+    this.landmarks = landmarks;
+  }
+
   /** La pendiente ya suavizada: los actores se apoyan en ella. */
   get slope(): number {
     return this.slopeNow;
@@ -643,7 +660,7 @@ export class Atmosphere {
     this.roadScroll += px;
     this.road.tilePositionX += px;
     this.near.tilePositionX += px * RENDER.nearFactor;
-    this.mid.tilePositionX += px * 0.38;
+    this.mid.tilePositionX += px * MID_FACTOR;
     this.far.tilePositionX += px * 0.12;
     this.clouds.tilePositionX += px * 0.02 + 1.2 * dtSec;
     this.clouds2.tilePositionX += px * 0.01 + 0.5 * dtSec;
@@ -655,6 +672,7 @@ export class Atmosphere {
     const fogTarget = this.frontFogBase + this.dread * 0.3;
     this.fogFront.alpha += (fogTarget - this.fogFront.alpha) * Math.min(1, dtSec * 1.5);
     this.fogMid.setAlpha(0.3 + this.dread * 0.2);
+    this.drawLandmarks();
 
     // El cielo se redibuja solo cuando la fase cambió lo bastante o mientras
     // dura un relámpago.
@@ -711,6 +729,47 @@ export class Atmosphere {
       const rate = star.getData('rate') as number;
       const tw = 0.35 + 0.65 * Math.abs(Math.sin(this.tAlive * rate + phase));
       star.setAlpha(base * tw);
+    }
+  }
+
+  // ---- refugios en el paisaje -----------------------------------------------------
+
+  /**
+   * Cada refugio cercano, en su capa: los de junto al asfalto a la escala de
+   * la carretera (pasan en segundos, con el pie en la pendiente); los
+   * lejanos a la escala de la capa media (se ven venir un buen rato).
+   */
+  private drawLandmarks(): void {
+    const near = this.nearMarks;
+    const far = this.farMarks;
+    near.clear();
+    far.clear();
+    if (this.landmarks.length === 0) return;
+    const p = this.phase;
+    const night = 1 - p.sun;
+    for (const mark of this.landmarks) {
+      if (landmarkLayer(mark.name) === 'near') {
+        const x = RENDER.playerX + mark.metersAhead * RENDER.groundPxPerMeter;
+        const half = landmarkHalfWidth(mark.name);
+        if (x < -half || x > RENDER.width + half) continue;
+        const dy = groundYAt(x, this.slopeNow) - RENDER.groundY;
+        drawLandmark(near, mark.name, x, HORIZON_Y + 6 + dy, {
+          silhouette: lerpColor(p.near, 0x7f8fb0, 0.22),
+          light: LAMP_LIGHT,
+          night,
+          t: this.tAlive,
+        });
+      } else {
+        const x = RENDER.playerX + mark.metersAhead * RENDER.groundPxPerMeter * MID_FACTOR;
+        const half = landmarkHalfWidth(mark.name);
+        if (x < -half || x > RENDER.width + half) continue;
+        drawLandmark(far, mark.name, x, HORIZON_Y - 40, {
+          silhouette: lerpColor(p.mid, 0x7f8fb0, 0.18),
+          light: LAMP_LIGHT,
+          night,
+          t: this.tAlive,
+        });
+      }
     }
   }
 

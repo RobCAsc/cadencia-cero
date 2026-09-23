@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionRecord } from './history';
-import { routeOverview, todayWindow } from './routeMap';
+import { refugesAround, routeOverview, todayWindow } from './routeMap';
 
 const DAY = 86_400_000;
 const T0 = Date.UTC(2026, 8, 1, 10);
@@ -69,6 +69,13 @@ describe('el diario de la Ruta', () => {
   it('el mapa se alarga hasta el refugio siguiente si hoy vas a pasar el próximo', () => {
     const o = routeOverview([rec({ startedAtMs: T0, distanceM: 8000 })], 1.5, 11, T0 + DAY);
     expect(o.toKm).toBe(25);
+  });
+
+  it('los refugios cercanos: los que se ven venir y el recién pasado, con sus metros', () => {
+    expect(refugesAround(9.7, 0.6).map((r) => [r.name, Math.round(r.metersAhead)])).toEqual([['El puente', 300]]);
+    expect(refugesAround(10.2, 0.6).map((r) => [r.name, Math.round(r.metersAhead)])).toEqual([['El puente', -200]]);
+    expect(refugesAround(17, 0.6)).toEqual([]);
+    expect(refugesAround(24.5, 0.6).map((r) => r.name)).toEqual(['La gasolinera']);
   });
 
   it('la ventana de hoy es la salida de hoy con un margen, y nada más ancha', () => {
