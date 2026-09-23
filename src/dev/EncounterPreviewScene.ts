@@ -31,7 +31,7 @@ const CAPTIONS: Readonly<Record<EncounterKind, readonly [string, string]>> = {
   boars: ['Los jabalíes', 'la madre y tres rayones; el último se despista y corre a alcanzarlos'],
   owl: ['La lechuza', 'en un poste; te sigue con los ojos y ulula'],
   cat: ['El gato', 'en una tapia; los ojos se encienden antes que el gato'],
-  cyclist: ['Otro superviviente', 'viene de frente con su frontal y saluda al cruzarse'],
+  cyclist: ['Otro superviviente', 'viene de frente por el carril de allá y te saluda con el timbre'],
   car: ['El coche abandonado', 'con los intermitentes puestos, cada vez más lentos'],
   sign: ['La señal pintada', 'el km real al próximo refugio y una frase de alguien'],
   trafficLight: ['El semáforo en ámbar', 'en un cruce vacío, con el tic del relé'],

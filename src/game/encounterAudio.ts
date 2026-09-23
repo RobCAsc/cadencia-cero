@@ -147,6 +147,30 @@ class EncounterAudio {
     src.start(t0);
   }
 
+  /** El timbre de otra bici: dos pings claros, el saludo de un ciclista de noche. */
+  bell(): void {
+    const ctx = gameAudio.context;
+    if (!ctx) return;
+    const t0 = ctx.currentTime + 0.02;
+    for (const at of [0, 0.16]) {
+      for (const [freq, g0] of [
+        [2350, 0.05],
+        [3520, 0.02],
+      ] as const) {
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0, t0 + at);
+        gain.gain.linearRampToValueAtTime(g0, t0 + at + 0.004);
+        gain.gain.setTargetAtTime(0, t0 + at + 0.01, 0.09);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(t0 + at);
+        osc.stop(t0 + at + 0.7);
+      }
+    }
+  }
+
   /** Un perro: dos ladridos cortos. */
   bark(): void {
     const ctx = gameAudio.context;

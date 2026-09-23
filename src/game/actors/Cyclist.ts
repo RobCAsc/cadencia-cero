@@ -106,6 +106,21 @@ export class Cyclist {
   }
 
   /**
+   * Para un segundo ciclista en el paisaje (otro superviviente que se cruza):
+   * dónde va, a qué escala (mirando a la izquierda si se le pide), a qué
+   * profundidad, y sin el charco de luna, que es solo del rider.
+   */
+  place(x: number, y: number, scale: number, depth: number, mirror = false): void {
+    this.gfx.setPosition(x, y).setScale(mirror ? -scale : scale, scale).setDepth(depth);
+    this.glow.setVisible(false);
+  }
+
+  destroy(): void {
+    this.gfx.destroy();
+    this.glow.destroy();
+  }
+
+  /**
    * @param effort01 fracción de esfuerzo cardíaco: la postura la cuenta. En
    * Z1 el rider va erguido; en Z4-Z5 se recoge sobre el manillar.
    */
