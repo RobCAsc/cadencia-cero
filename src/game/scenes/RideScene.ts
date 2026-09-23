@@ -614,11 +614,18 @@ export class RideScene extends Phaser.Scene {
       const refuge = nextRefuge(kmNow);
       this.encounters.start(plan.kind, {
         distanceM: state.distanceM,
+        speedMps: state.playerSpeedKph / 3.6,
         sign: { refuge: refuge.name, kmLeft: Math.round(refuge.km - kmNow) },
       });
       this.encounterSeen = { kind: plan.kind, km: kmNow };
     }
-    this.encounters.update({ dt, distanceM: state.distanceM, ...this.atmosphere.look });
+    this.encounters.update({
+      dt,
+      distanceM: state.distanceM,
+      speedMps: state.playerSpeedKph / 3.6,
+      inZone: state.inZoneRunSec > 0,
+      ...this.atmosphere.look,
+    });
 
     const crankRpm =
       state.inputMode === 'cadence' ? state.cadenceRpm : state.playerSpeedKph * VISUAL_RPM_PER_KPH;

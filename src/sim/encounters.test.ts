@@ -106,11 +106,15 @@ describe('los encuentros de la carretera', () => {
     };
     const segments = expandProgram(short);
     expect(encounterWindows('train', segments)).toEqual([]);
+    expect(encounterWindows('horses', segments)).toEqual([]);
+    expect(encounterWindows('dog', segments)).toEqual([]);
     expect(encounterWindows('owl', segments).length).toBeGreaterThan(0);
   });
 
   it('el resumen lo cuenta con el km de la Ruta', () => {
     expect(describeEncounter('deer', 104.26)).toBe('Un ciervo cruzó la carretera en el km 104,3');
     expect(describeEncounter('train', 12)).toContain('km 12,0');
+    expect(describeEncounter('dog', 3)).toBe('Un perro te salió al paso en el km 3,0');
+    expect(describeEncounter('horses', 3)).toBe('Una manada de caballos al galope en el km 3,0');
   });
 });

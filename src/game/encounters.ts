@@ -42,10 +42,16 @@ export interface EncounterFrame extends EncounterLook {
   dt: number;
   /** Metros pedaleados hoy: lo que está en la carretera se mueve con ellos. */
   distanceM: number;
+  /** Tu velocidad ahora: lo que corre a tu lado la compara con la suya. */
+  speedMps: number;
+  /** Dentro de la zona prescrita: el perro solo corre contigo mientras la aguantes. */
+  inZone: boolean;
 }
 
 export interface EncounterStart {
   distanceM: number;
+  /** Tu velocidad al aparecer: decide si los caballos vienen por detrás o los alcanzas. */
+  speedMps?: number;
   /** Para la señal: el próximo refugio y los km que faltan. */
   sign?: { refuge: string; kmLeft: number };
   rnd?: () => number;
@@ -798,6 +804,185 @@ class MeteorShower extends Active {
   }
 }
 
+// ---- los que corren contigo ---------------------------------------------------------
+
+/** Segundos que el perro aguanta a tu lado antes de volverse a su cuneta. */
+const DOG_RUN_SEC = 40;
+/** Por debajo de esto el perro no tiene a quién seguir. */
+const DOG_MIN_MPS = 2;
+
+function drawDog(g: Phaser.GameObjects.Graphics, x: number, y: number, ink: number, light: number, night: number, gait: number | undefined): void {
+  g.fillStyle(ink, 1);
+  if (gait === undefined) {
+    // Sentado en la cuneta: el cuerpo erguido, la cola en el suelo, mirando la carretera.
+    g.fillEllipse(x, y - 16, 24, 30);
+    g.fillEllipse(x + 4, y - 6, 30, 14);
+    g.fillCircle(x - 6, y - 36, 8.5);
+    g.fillTriangle(x - 16, y - 38, x - 8, y - 36, x - 12, y - 30); // el hocico
+    g.fillTriangle(x - 10, y - 42, x - 4, y - 42, x - 9, y - 50);
+    g.fillTriangle(x, y - 42, x - 4, y - 42, x - 1, y - 50);
+    g.lineStyle(3, ink, 1);
+    g.lineBetween(x - 4, y - 8, x - 6, y);
+    g.lineBetween(x + 2, y - 8, x + 1, y);
+    g.lineBetween(x + 16, y - 6, x + 30, y - 2);
+    drawEyes(g, x - 9, y - 37, 5, 1.4, light, 0.9 * night);
+    return;
+  }
+  // Corriendo: cuerpo estirado, orejas atrás, cola arriba, patas al galope.
+  g.fillEllipse(x, y - 21, 40, 16);
+  g.lineStyle(9, ink, 1);
+  g.lineBetween(x - 16, y - 24, x - 24, y - 30);
+  g.fillCircle(x - 27, y - 32, 7.5);
+  g.fillTriangle(x - 40, y - 33, x - 30, y - 30, x - 31, y - 36); // el hocico
+  g.fillTriangle(x - 26, y - 38, x - 18, y - 36, x - 22, y - 44); // la oreja hacia atrás
+  const k = Math.sin(gait);
+  g.lineStyle(3.5, ink, 1);
+  g.lineBetween(x - 14, y - 16, x - 14 - 10 * k, y - 2);
+  g.lineBetween(x - 8, y - 16, x - 8 - 7 * k, y);
+  g.lineBetween(x + 10, y - 16, x + 10 + 10 * k, y - 2);
+  g.lineBetween(x + 16, y - 16, x + 16 + 7 * k, y);
+  g.lineStyle(3, ink, 1);
+  g.lineBetween(x + 18, y - 24, x + 30, y - 38 + Math.sin(gait * 0.5) * 3);
+  drawEyes(g, x - 31, y - 33, 4, 1.3, light, 0.9 * night);
+}
+
+class Dog extends Active {
+  private phase: 'waiting' | 'running' | 'leaving' = 'waiting';
+  private x = 0;
+  private ranSec = 0;
+  private gait = 0;
+  private barked = false;
+
+  protected draw(f: EncounterFrame, L: EncounterLayers): boolean {
+    const g = L.near;
+    if (this.phase === 'waiting') {
+      // Sentado en la cuneta, pasa con la carretera; si pasas en zona, sale detrás de ti.
+      const x = worldX(f, this.startM, 12);
+      if (x < -80) return false;
+      drawDog(g, x, feetY(x, f.slope), nearTone(f, x), f.light, f.night, undefined);
+      if (!this.barked && x < RENDER.playerX + 260) {
+        this.barked = true;
+        encounterAudio.bark();
+      }
+      if (x < RENDER.playerX + 150 && f.inZone && f.speedMps > DOG_MIN_MPS) {
+        this.phase = 'running';
+        this.x = x;
+      }
+      return true;
+    }
+    // Corre a tu lado mientras aguantes la zona; si te sales se queda atrás, y si
+    // vuelves antes de perderlo de vista, te alcanza. Pasado su rato, se vuelve.
+    if (this.phase === 'running') {
+      this.ranSec += f.dt;
+      if (this.ranSec >= DOG_RUN_SEC) this.phase = 'leaving';
+    }
+    const keeping = this.phase === 'running' && f.inZone && f.speedMps > DOG_MIN_MPS;
+    if (keeping) this.x += (RENDER.playerX + 70 - this.x) * Math.min(1, f.dt * 1.4);
+    else this.x -= (50 + f.speedMps * 12) * f.dt;
+    if (this.x < -80) return false;
+    this.gait += f.dt * (5 + f.speedMps * 1.8);
+    drawDog(g, this.x, feetY(this.x, f.slope) + 4, nearTone(f, this.x), f.light, f.night, this.gait);
+    return true;
+  }
+}
+
+const HORSE_MPS = 20 / 3.6;
+/** Pasado este rato los caballos se abren y se van por delante. */
+const HORSES_RUN_SEC = 70;
+
+function drawHorse(g: Phaser.GameObjects.Graphics, x: number, y: number, s: number, ink: number, light: number, night: number, gallop: number): void {
+  const k = Math.sin(gallop);
+  const k2 = Math.sin(gallop + Math.PI * 0.8);
+  // Patas traseras detrás del cuerpo, cuerpo, cuello y cabeza, patas delanteras delante.
+  g.lineStyle(5 * s, ink, 1);
+  g.lineBetween(x - 24 * s, y - 40 * s, x - 24 * s - 14 * s * k2, y - 18 * s);
+  g.lineBetween(x - 24 * s - 14 * s * k2, y - 18 * s, x - 24 * s - 20 * s * k2 + 2 * s, y);
+  g.fillStyle(ink, 1);
+  g.fillEllipse(x, y - 46 * s, 72 * s, 28 * s);
+  g.lineStyle(14 * s, ink, 1);
+  g.lineBetween(x + 26 * s, y - 54 * s, x + 46 * s, y - 84 * s);
+  g.fillEllipse(x + 55 * s, y - 86 * s, 30 * s, 13 * s);
+  g.fillTriangle(x + 46 * s, y - 94 * s, x + 52 * s, y - 92 * s, x + 47 * s, y - 103 * s);
+  g.lineStyle(3 * s, ink, 1);
+  for (let i = 0; i < 4; i++) {
+    const mx = x + 24 * s + i * 7 * s;
+    const my = y - 60 * s - i * 8 * s;
+    g.lineBetween(mx, my, mx - 9 * s, my - 6 * s + Math.sin(gallop + i) * 2 * s);
+  }
+  const sw = Math.sin(gallop * 0.5) * 5 * s;
+  g.lineStyle(4 * s, ink, 1);
+  g.lineBetween(x - 34 * s, y - 50 * s, x - 58 * s, y - 40 * s + sw);
+  g.lineBetween(x - 34 * s, y - 50 * s, x - 56 * s, y - 28 * s + sw);
+  g.lineStyle(5 * s, ink, 1);
+  g.lineBetween(x + 22 * s, y - 40 * s, x + 22 * s + 14 * s * k, y - 18 * s);
+  g.lineBetween(x + 22 * s + 14 * s * k, y - 18 * s, x + 22 * s + 20 * s * k + 2 * s, y);
+  g.lineBetween(x - 16 * s, y - 40 * s, x - 16 * s - 12 * s * k2 * 0.7, y - 18 * s);
+  g.lineBetween(x - 16 * s - 12 * s * k2 * 0.7, y - 18 * s, x - 16 * s - 16 * s * k2 * 0.7, y);
+  g.lineStyle(1.5, 0x9fb0d0, 0.3 * night);
+  g.strokeEllipse(x, y - 46 * s, 72 * s, 28 * s);
+  drawEyes(g, x + 60 * s, y - 88 * s, 0, 1.5 * s, light, 0.8 * night);
+}
+
+interface HorseSpec {
+  dx: number;
+  dy: number;
+  s: number;
+  ph: number;
+}
+
+class Horses extends Active {
+  private readonly members: readonly HorseSpec[] = [
+    { dx: 0, dy: 0, s: 1, ph: 0 },
+    { dx: -120, dy: -6, s: 0.9, ph: 1.7 },
+    { dx: -215, dy: 4, s: 0.95, ph: 3.1 },
+    { dx: -310, dy: -3, s: 0.85, ph: 4.4 },
+    { dx: -415, dy: 2, s: 0.92, ph: 0.9 },
+  ];
+  private readonly sound: SoundHandle = encounterAudio.hooves();
+  /** Posición del caballo que va delante, en metros de la salida (como distanceM). */
+  private herdM: number;
+  private seen = false;
+
+  constructor(startM: number, rnd: () => number, speedMps: number) {
+    super(startM, rnd);
+    // Si vas más rápido que ellos, los alcanzas por detrás; si no, te alcanzan ellos.
+    const ahead = speedMps > HORSE_MPS;
+    this.herdM = ahead ? startM + (RENDER.width + 120 - RENDER.playerX) / PX_M : startM - (RENDER.playerX + 480) / PX_M;
+  }
+
+  protected draw(f: EncounterFrame, L: EncounterLayers): boolean {
+    const away = this.t > HORSES_RUN_SEC ? 3 : 0;
+    this.herdM += (HORSE_MPS + away) * f.dt;
+    const leadX = RENDER.playerX + (this.herdM - f.distanceM) * PX_M;
+    const tailX = leadX - 415 - 70;
+    const on = leadX > -80 && tailX < RENDER.width + 80;
+    if (on) this.seen = true;
+    if (!on && (this.seen || this.t > 45)) return false;
+    this.sound.setLevel(on ? clamp01((Math.min(leadX + 40, RENDER.width) - Math.max(tailX, 0)) / 500) : 0);
+    if (!on) return true;
+    const g = L.near;
+    const gallop = this.t * 7;
+    // Los de atrás primero, para que los de delante los tapen.
+    for (let i = this.members.length - 1; i >= 0; i--) {
+      const m = this.members[i]!;
+      const x = leadX + m.dx;
+      const y0 = feetY(x, f.slope) + m.dy;
+      // El polvo que levantan.
+      g.fillStyle(0x8a8070, 0.07);
+      for (let p = 0; p < 3; p++) {
+        const k = (this.t * 1.3 + p * 0.33 + i * 0.2) % 1;
+        g.fillCircle(x - 40 * m.s - k * 50, y0 - 6 - k * 26, 6 + k * 14);
+      }
+      drawHorse(g, x, y0, m.s, nearTone(f, x), f.light, f.night, gallop + m.ph);
+    }
+    return true;
+  }
+
+  override destroy(): void {
+    this.sound.stop();
+  }
+}
+
 // ---- el gestor ---------------------------------------------------------------------
 
 function make(kind: EncounterKind, opts: EncounterStart, scene: Phaser.Scene): Active {
@@ -832,6 +1017,10 @@ function make(kind: EncounterKind, opts: EncounterStart, scene: Phaser.Scene): A
       return new Bats(m, rnd);
     case 'meteors':
       return new MeteorShower(m, rnd);
+    case 'dog':
+      return new Dog(m, rnd);
+    case 'horses':
+      return new Horses(m, rnd, opts.speedMps ?? 0);
   }
 }
 

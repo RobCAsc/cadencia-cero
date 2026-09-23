@@ -21,7 +21,9 @@ export type EncounterKind =
   | 'crows'
   | 'train'
   | 'bats'
-  | 'meteors';
+  | 'meteors'
+  | 'dog'
+  | 'horses';
 
 export const ENCOUNTER_KINDS: readonly EncounterKind[] = [
   'deer',
@@ -38,6 +40,8 @@ export const ENCOUNTER_KINDS: readonly EncounterKind[] = [
   'train',
   'bats',
   'meteors',
+  'dog',
+  'horses',
 ];
 
 /** Cuándo cabe cada uno: en cualquier tramo permitido, solo de noche cerrada, o solo en tramos suaves. */
@@ -64,6 +68,8 @@ export const ENCOUNTER_SPECS: Readonly<Record<EncounterKind, EncounterSpec>> = {
   train: { durationSec: 70, when: 'any' },
   bats: { durationSec: 22, when: 'night' },
   meteors: { durationSec: 25, when: 'night' },
+  dog: { durationSec: 50, when: 'any' },
+  horses: { durationSec: 60, when: 'any' },
 };
 
 export interface EncounterPlan {
@@ -203,5 +209,9 @@ export function describeEncounter(kind: EncounterKind, km: number): string {
       return `Murciélagos sobre la luna en el ${at}`;
     case 'meteors':
       return `Una lluvia de estrellas en el ${at}`;
+    case 'dog':
+      return `Un perro te salió al paso en el ${at}`;
+    case 'horses':
+      return `Una manada de caballos al galope en el ${at}`;
   }
 }

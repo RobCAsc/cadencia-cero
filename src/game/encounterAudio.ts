@@ -147,6 +147,52 @@ class EncounterAudio {
     src.start(t0);
   }
 
+  /** Un perro: dos ladridos cortos. */
+  bark(): void {
+    const ctx = gameAudio.context;
+    if (!ctx) return;
+    const t0 = ctx.currentTime + 0.02;
+    for (const at of [0, 0.24]) {
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(330, t0 + at);
+      osc.frequency.exponentialRampToValueAtTime(170, t0 + at + 0.13);
+      const noise = ctx.createBufferSource();
+      noise.buffer = noiseBuffer(ctx, 0.14, (i, n) => (Math.random() * 2 - 1) * (1 - i / n));
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 700;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0, t0 + at);
+      gain.gain.linearRampToValueAtTime(0.09, t0 + at + 0.015);
+      gain.gain.setTargetAtTime(0, t0 + at + 0.08, 0.03);
+      osc.connect(filter);
+      noise.connect(filter);
+      filter.connect(gain).connect(ctx.destination);
+      osc.start(t0 + at);
+      noise.start(t0 + at);
+      osc.stop(t0 + at + 0.3);
+    }
+  }
+
+  /** Cascos al galope: golpes sordos en ritmo de tres, con nivel. */
+  hooves(): SoundHandle {
+    const ctx = gameAudio.context;
+    if (!ctx) return SILENT;
+    const hits = [0, 0.09, 0.2, 0.62, 0.71, 0.82, 1.24, 1.33, 1.44, 1.86, 1.95, 2.06];
+    const rate = ctx.sampleRate;
+    const buffer = noiseBuffer(ctx, 2.48, (i) => {
+      const t = i / rate;
+      let env = 0;
+      for (const h of hits) if (t >= h && t < h + 0.12) env = Math.max(env, Math.exp(-(t - h) / 0.03));
+      return (Math.random() * 2 - 1) * env;
+    });
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 220;
+    return loopWithLevel(ctx, buffer, filter, 0.22);
+  }
+
   /** El tren en el horizonte: un retumbo grave continuo, con nivel. */
   rumble(): SoundHandle {
     const ctx = gameAudio.context;
