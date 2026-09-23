@@ -1,11 +1,12 @@
 import Phaser from 'phaser';
 import { RENDER } from '../config';
 import { groundYAt, slopeRotation } from './gapMapping';
+import type { EncounterLayers, EncounterLook } from './encounters';
 import { drawLandmark, landmarkHalfWidth, landmarkLayer, type Landmark } from './landmarks';
 import { lcg } from './rng';
 
-/** La capa media scrollea a esta fracción de la carretera; los refugios lejanos van con ella. */
-const MID_FACTOR = 0.38;
+/** La capa media scrollea a esta fracción de la carretera; los refugios lejanos y las hogueras van con ella. */
+export const MID_FACTOR = 0.38;
 
 /** La carretera y los matorrales se inclinan pivotando en los pies del ciclista; anchos de sobra para no dejar huecos. */
 const SLOPE_LAYER_W = 2600;
@@ -22,7 +23,7 @@ const SLOPE_EASE_SEC = 1.2;
 // se acerca, y al amanecer rayos de sol y pájaros. El scroll es proporcional
 // a la velocidad del jugador y la niebla deriva sola con el "viento".
 
-const HORIZON_Y = 600;
+export const HORIZON_Y = 600;
 
 interface Phase {
   t: number;
@@ -526,6 +527,9 @@ export class Atmosphere {
   private readonly frontFogBase: number;
   private readonly farMarks: Phaser.GameObjects.Graphics;
   private readonly nearMarks: Phaser.GameObjects.Graphics;
+  /** Capas solo para los encuentros: el cielo (sobre las estrellas) y el horizonte (entre las ruinas y los árboles). */
+  private readonly skyMarks: Phaser.GameObjects.Graphics;
+  private readonly horizonMarks: Phaser.GameObjects.Graphics;
   /** Los refugios de la Ruta que caen cerca de donde vas, con sus metros por delante. */
   private landmarks: readonly Landmark[] = [];
 
@@ -568,7 +572,9 @@ export class Atmosphere {
     this.sun = scene.add.image(1000, 640, 'atm-sun').setBlendMode(Phaser.BlendModes.ADD);
     this.rays = scene.add.graphics({ x: 0, y: 0 }).setBlendMode(Phaser.BlendModes.ADD);
     this.skyFx = scene.add.graphics({ x: 0, y: 0 });
+    this.skyMarks = scene.add.graphics();
     this.far = scene.add.tileSprite(0, HORIZON_Y - 260, w, 260, 'atm-far').setOrigin(0, 0);
+    this.horizonMarks = scene.add.graphics();
     // La niebla abraza el horizonte, sin lavar las siluetas cercanas.
     this.fogBack = scene.add
       .tileSprite(0, HORIZON_Y - 200, w, 160, 'atm-fog')
@@ -650,6 +656,28 @@ export class Atmosphere {
     return this.slopeNow;
   }
 
+  /** Las capas en las que dibujan los encuentros; se limpian en cada update, antes de que dibujen. */
+  get encounterLayers(): EncounterLayers {
+    return { sky: this.skyMarks, horizon: this.horizonMarks, mid: this.farMarks, near: this.nearMarks };
+  }
+
+  /** Lo que el paisaje sabe ahora mismo: la noche, las tintas de cada capa, la luna. */
+  get look(): EncounterLook {
+    const p = this.phase;
+    return {
+      night: 1 - p.sun,
+      sun: p.sun,
+      nearInk: lerpColor(p.near, 0x7f8fb0, 0.22),
+      midInk: lerpColor(p.mid, 0x7f8fb0, 0.18),
+      farInk: lerpColor(p.far, 0x7f8fb0, 0.16),
+      skyInk: lerpColor(0x1a1630, 0x3a3660, p.sun),
+      light: LAMP_LIGHT,
+      moonX: this.moon.x,
+      moonY: this.moon.y,
+      slope: this.slopeNow,
+    };
+  }
+
   update(playerSpeedMps: number, dtSec: number): void {
     this.tAlive += dtSec;
     this.slopeNow += (this.slopeTarget - this.slopeNow) * Math.min(1, dtSec / SLOPE_EASE_SEC);
@@ -672,6 +700,8 @@ export class Atmosphere {
     const fogTarget = this.frontFogBase + this.dread * 0.3;
     this.fogFront.alpha += (fogTarget - this.fogFront.alpha) * Math.min(1, dtSec * 1.5);
     this.fogMid.setAlpha(0.3 + this.dread * 0.2);
+    this.skyMarks.clear();
+    this.horizonMarks.clear();
     this.drawLandmarks();
 
     // El cielo se redibuja solo cuando la fase cambió lo bastante o mientras

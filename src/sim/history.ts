@@ -1,5 +1,12 @@
 import type { InputMode } from '../config';
+import type { EncounterKind } from './encounters';
 import type { RideRpe, RideSummary } from './types';
+
+/** Lo que pasó en la carretera sin que nadie lo prescribiera, y en qué km de la Ruta. */
+export interface EncounterRecord {
+  kind: EncounterKind;
+  km: number;
+}
 
 /**
  * Una salida guardada en la tablet. Es la unidad del hábito: todo lo que la
@@ -51,6 +58,8 @@ export interface SessionRecord {
   hrTrace?: number[];
   /** Segundos con la pulsera callada durante la salida. */
   staleHeartRateSec?: number;
+  /** El encuentro de la salida, si lo hubo: el resumen lo cuenta en una línea. */
+  encounter?: EncounterRecord;
 }
 
 export interface SessionInput {
@@ -64,6 +73,7 @@ export interface SessionInput {
   preRideRestBpm?: number;
   rpe?: RideRpe;
   note?: string;
+  encounter?: EncounterRecord;
 }
 
 export function toSessionRecord(input: SessionInput): SessionRecord {
@@ -83,6 +93,7 @@ export function toSessionRecord(input: SessionInput): SessionRecord {
     timesCaughtInEasy: s.timesCaughtInEasy,
     ...(input.rpe !== undefined ? { rpe: input.rpe } : {}),
     ...(input.note ? { note: input.note } : {}),
+    ...(input.encounter ? { encounter: { ...input.encounter } } : {}),
     ...(s.gapTrace.length > 0 ? { gapTrace: [...s.gapTrace] } : {}),
     ...(s.hrTrace.length > 0 ? { hrTrace: [...s.hrTrace] } : {}),
     staleHeartRateSec: Math.round(s.staleHeartRateSec),
